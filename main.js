@@ -1,13 +1,66 @@
 import kaboom from "https://unpkg.com/kaboom@3000.1.17/dist/kaboom.mjs";
 
+// Calculate responsive canvas size
+function getGameDimensions() {
+    const baseWidth = 800;
+    const baseHeight = 600;
+    const aspectRatio = baseWidth / baseHeight;
+
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const windowAspect = windowWidth / windowHeight;
+
+    let gameWidth, gameHeight, scale;
+
+    // Maintain aspect ratio while fitting to screen
+    if (windowAspect > aspectRatio) {
+        // Window is wider - fit to height
+        gameHeight = Math.min(baseHeight, windowHeight);
+        gameWidth = gameHeight * aspectRatio;
+        scale = gameHeight / baseHeight;
+    } else {
+        // Window is taller - fit to width
+        gameWidth = Math.min(baseWidth, windowWidth);
+        gameHeight = gameWidth / aspectRatio;
+        scale = gameWidth / baseWidth;
+    }
+
+    return {
+        width: baseWidth,
+        height: baseHeight,
+        scale: Math.max(0.5, Math.min(scale, 2)) // Limit scale between 0.5 and 2
+    };
+}
+
+const dims = getGameDimensions();
+
 // Initialize Kaboom
 const k = kaboom({
-    width: 800,
-    height: 600,
+    width: dims.width,
+    height: dims.height,
     background: [135, 206, 235], // Sky blue
-    scale: 1,
+    scale: dims.scale,
     crisp: true,
+    canvas: document.getElementById("game-container")?.querySelector("canvas") || undefined,
+    stretch: true,
+    letterbox: true,
 });
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    const newDims = getGameDimensions();
+    // Kaboom doesn't support dynamic resize, but the letterbox/stretch should handle it
+    // For a full solution, you'd need to reload or use a custom scaling approach
+});
+
+// Touch/Mouse position tracker for mobile
+let currentPointerPos = vec2(400, 300);
+let isTouchDevice = false;
+
+// Detect touch device
+if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    isTouchDevice = true;
+}
 
 // Game constants
 const PLAYER_SPEED = 300;
@@ -1014,9 +1067,32 @@ scene("game", () => {
         spawnMonsterSmart();
     }
 
-    // Player follows mouse
+    // Touch event handlers for mobile
+    if (isTouchDevice) {
+        const canvas = k.canvas;
+
+        const updateTouchPos = (e) => {
+            e.preventDefault();
+            const touch = e.touches[0] || e.changedTouches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = 800 / rect.width;
+            const scaleY = 600 / rect.height;
+            currentPointerPos = vec2(
+                (touch.clientX - rect.left) * scaleX,
+                (touch.clientY - rect.top) * scaleY
+            );
+        };
+
+        canvas.addEventListener('touchstart', updateTouchPos, { passive: false });
+        canvas.addEventListener('touchmove', updateTouchPos, { passive: false });
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+    }
+
+    // Player follows mouse or touch
     onUpdate(() => {
-        const mpos = mousePos();
+        const mpos = isTouchDevice ? currentPointerPos : mousePos();
         const dir = mpos.sub(player.pos);
 
         // Only move if mouse is far enough from player
@@ -1252,8 +1328,13 @@ scene("game", () => {
     ]);
 
     // Instructions
+    const instructionText = isTouchDevice
+        ? "Touch to guide your character. Bump into monsters to collect them!"
+        : "Move mouse to guide your character. Bump into monsters to collect them!";
+    const instructionSize = isTouchDevice ? 12 : 14;
+
     add([
-        text("Move mouse to guide your character. Bump into monsters to collect them!", { size: 14 }),
+        text(instructionText, { size: instructionSize }),
         pos(400, 580),
         anchor("center"),
         color(50, 50, 50),
@@ -1328,8 +1409,12 @@ scene("title", () => {
         titleMonster.pos.y = 380 + Math.sin(t) * 15;
     });
 
+    const startText = isTouchDevice
+        ? "Tap to Start"
+        : "Press SPACE or Click to Start";
+
     add([
-        text("Press SPACE or Click to Start", { size: 28 }),
+        text(startText, { size: 28 }),
         pos(400, 500),
         anchor("center"),
         color(100, 100, 100),
@@ -1337,6 +1422,15 @@ scene("title", () => {
 
     onKeyPress("space", () => go("game"));
     onClick(() => go("game"));
+
+    // Touch support for title screen
+    if (isTouchDevice) {
+        const canvas = k.canvas;
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            go("game");
+        }, { once: true, passive: false });
+    }
 });
 
 // Start with title screen
