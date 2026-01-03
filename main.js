@@ -121,8 +121,59 @@ function createPlayer() {
         "player",
         {
             direction: vec2(0, 0),
+            animTime: 0,
+            isMoving: false,
+            bobOffset: 0,
         }
     ]);
+
+    // Add legs
+    const leftLeg = add([
+        rect(6, 14, { radius: 2 }),
+        pos(0, 0),
+        color(100, 100, 200), // Blue pants
+        z(-1),
+        anchor("top"),
+        "playerPart",
+        { baseOffset: vec2(-8, 18), currentOffset: vec2(-8, 18) }
+    ]);
+
+    const rightLeg = add([
+        rect(6, 14, { radius: 2 }),
+        pos(0, 0),
+        color(100, 100, 200), // Blue pants
+        z(-1),
+        anchor("top"),
+        "playerPart",
+        { baseOffset: vec2(8, 18), currentOffset: vec2(8, 18) }
+    ]);
+
+    // Add arms
+    const leftArm = add([
+        rect(5, 12, { radius: 2 }),
+        pos(0, 0),
+        color(255, 220, 180), // Skin tone
+        z(-1),
+        anchor("top"),
+        "playerPart",
+        { baseOffset: vec2(-22, -5), currentOffset: vec2(-22, -5) }
+    ]);
+
+    const rightArm = add([
+        rect(5, 12, { radius: 2 }),
+        pos(0, 0),
+        color(255, 220, 180), // Skin tone
+        z(-1),
+        anchor("top"),
+        "playerPart",
+        { baseOffset: vec2(22, -5), currentOffset: vec2(22, -5) }
+    ]);
+
+    // Store limb references
+    player.leftLeg = leftLeg;
+    player.rightLeg = rightLeg;
+    player.leftArm = leftArm;
+    player.rightArm = rightArm;
 
     // Add a face to the player
     add([
@@ -191,6 +242,16 @@ function createMonster(number, startPos, designIndex = null) {
             isDancing: false,
             isBumping: false,
             attachments: [], // Track attached elements for cleanup
+            // Animation state
+            animTime: rand(0, 10), // Randomize start time so monsters aren't synchronized
+            blinkTimer: rand(2, 4),
+            isBlinking: false,
+            blinkDuration: 0,
+            // Animated parts (populated by addMonster* functions)
+            antennae: [],
+            pupils: [],
+            eyeLids: [],
+            mouth: null,
         }
     ]);
 
@@ -234,27 +295,27 @@ function addMonsterFeatures(monster, design) {
 
     switch (design.feature) {
         case "antennae":
-            // Two bouncy antennae
+            // Two bouncy antennae (no follow - animated manually)
             const ant1 = add([
                 circle(6),
                 pos(0, 0),
                 color(...darkColor),
                 z(0),
-                follow(monster, vec2(-12, -30)),
                 "monsterPart",
-                { parentMonster: monster }
+                { parentMonster: monster, baseOffset: vec2(-12, -30) }
             ]);
             monster.attachments.push(ant1);
+            monster.antennae.push(ant1);
             const ant2 = add([
                 circle(6),
                 pos(0, 0),
                 color(...darkColor),
                 z(0),
-                follow(monster, vec2(12, -30)),
                 "monsterPart",
-                { parentMonster: monster }
+                { parentMonster: monster, baseOffset: vec2(12, -30) }
             ]);
             monster.attachments.push(ant2);
+            monster.antennae.push(ant2);
             // Antenna stalks
             const stalk1 = add([
                 rect(3, 15),
@@ -503,6 +564,7 @@ function addMonsterEyes(monster, design) {
         { parentMonster: monster }
     ]);
     monster.attachments.push(pupil1);
+    monster.pupils.push(pupil1);
 
     const pupil2 = add([
         circle(pupilSize),
@@ -514,6 +576,36 @@ function addMonsterEyes(monster, design) {
         { parentMonster: monster }
     ]);
     monster.attachments.push(pupil2);
+    monster.pupils.push(pupil2);
+
+    // Blink lids (hidden normally, shown when blinking)
+    const blinkLid1 = add([
+        rect(eyeSize * 2.2, eyeSize * 2.2, { radius: eyeSize }),
+        pos(0, 0),
+        color(...design.bodyColor),
+        opacity(0),
+        z(4),
+        anchor("center"),
+        follow(monster, vec2(-eyeOffset, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(blinkLid1);
+    monster.eyeLids.push(blinkLid1);
+
+    const blinkLid2 = add([
+        rect(eyeSize * 2.2, eyeSize * 2.2, { radius: eyeSize }),
+        pos(0, 0),
+        color(...design.bodyColor),
+        opacity(0),
+        z(4),
+        anchor("center"),
+        follow(monster, vec2(eyeOffset, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(blinkLid2);
+    monster.eyeLids.push(blinkLid2);
 
     // Sleepy eyes get half-closed lids
     if (design.eyeStyle === "sleepy") {
@@ -610,9 +702,10 @@ function addMonsterExpression(monster, design) {
         z(2),
         follow(monster, mouthOffset),
         "monsterPart",
-        { parentMonster: monster }
+        { parentMonster: monster, baseSize: mouthSize }
     ]);
     monster.attachments.push(mouth);
+    monster.mouth = mouth;
 
     // Wink expression - add closed eye
     if (design.expression === "wink") {
@@ -746,7 +839,7 @@ function createTargetZone(targetSum, position) {
     }
 
     // Target number display
-    add([
+    const numberText = add([
         text(String(targetSum), { size: 36 }),
         pos(position),
         color(100, 50, 0),
@@ -754,9 +847,33 @@ function createTargetZone(targetSum, position) {
         z(5),
     ]);
 
+    zone.numberText = numberText;
+
     monstersInZones.set(zone, []);
 
     return zone;
+}
+
+// Update a zone's target sum to a new random value
+function updateZoneTarget(zone) {
+    const oldSum = zone.targetSum;
+    // Generate a new target between 3 and 10, different from current
+    let newSum;
+    do {
+        newSum = randi(3, 11); // randi is exclusive on upper bound
+    } while (newSum === oldSum);
+
+    // Update zone data
+    zone.targetSum = newSum;
+
+    // Update visual display
+    zone.numberText.text = String(newSum);
+
+    // Update targetSums array for smart spawning
+    const idx = targetSums.indexOf(oldSum);
+    if (idx > -1) {
+        targetSums[idx] = newSum;
+    }
 }
 
 // Spawn sparkle particles for celebration
@@ -908,11 +1025,40 @@ scene("game", () => {
             const speed = Math.min(dir.len() * 3, PLAYER_SPEED);
             player.pos = player.pos.add(moveDir.scale(speed * dt()));
             player.direction = moveDir;
+            player.isMoving = true;
+        } else {
+            player.isMoving = false;
         }
 
         // Keep player in bounds
         player.pos.x = clamp(player.pos.x, 30, 770);
         player.pos.y = clamp(player.pos.y, 30, 570);
+
+        // Animate player
+        player.animTime += dt() * 10;
+
+        if (player.isMoving) {
+            // Running animation - legs alternate, arms swing
+            const legSwing = Math.sin(player.animTime) * 8;
+            const armSwing = Math.sin(player.animTime) * 6;
+
+            player.leftLeg.pos = player.pos.add(vec2(-8, 18 + legSwing));
+            player.rightLeg.pos = player.pos.add(vec2(8, 18 - legSwing));
+            player.leftArm.pos = player.pos.add(vec2(-22, -5 - armSwing));
+            player.rightArm.pos = player.pos.add(vec2(22, -5 + armSwing));
+            player.bobOffset = 0;
+        } else {
+            // Idle bobbing animation
+            player.bobOffset = Math.sin(player.animTime * 0.3) * 3;
+
+            // Gentle arm wave when idle
+            const idleWave = Math.sin(player.animTime * 0.5) * 3;
+
+            player.leftLeg.pos = player.pos.add(vec2(-8, 18));
+            player.rightLeg.pos = player.pos.add(vec2(8, 18));
+            player.leftArm.pos = player.pos.add(vec2(-22, -5 + idleWave));
+            player.rightArm.pos = player.pos.add(vec2(22, -5 - idleWave));
+        }
     });
 
     // Count how many monsters are currently following
@@ -950,44 +1096,81 @@ scene("game", () => {
 
     // Monster behavior
     onUpdate("monster", (monster) => {
-        if (monster.isDancing || monster.isBumping) return;
+        // Movement logic - skip if dancing or bumping
+        if (!monster.isDancing && !monster.isBumping) {
+            if (monster.isFollowing) {
+                // Follow the player
+                const dir = player.pos.sub(monster.pos);
+                if (dir.len() > 40) { // Keep some distance from player
+                    monster.pos = monster.pos.add(dir.unit().scale(MONSTER_CHASE_SPEED * dt()));
+                }
+            } else {
+                // Wander randomly - spread out across the play area
+                monster.wanderTimer -= dt();
 
-        if (monster.isFollowing) {
-            // Follow the player
-            const dir = player.pos.sub(monster.pos);
-            if (dir.len() > 40) { // Keep some distance from player
-                monster.pos = monster.pos.add(dir.unit().scale(MONSTER_CHASE_SPEED * dt()));
+                if (monster.wanderTimer <= 0 || !monster.wanderTarget) {
+                    // Pick a random spot, but avoid the center to spread out
+                    // Divide screen into regions and pick randomly
+                    const regions = [
+                        { x: [80, 250], y: [220, 400] },   // Left
+                        { x: [550, 720], y: [220, 400] }, // Right
+                        { x: [250, 550], y: [350, 520] }, // Bottom middle
+                        { x: [250, 550], y: [220, 320] }, // Top middle
+                    ];
+                    const region = choose(regions);
+                    monster.wanderTarget = vec2(
+                        rand(region.x[0], region.x[1]),
+                        rand(region.y[0], region.y[1])
+                    );
+                    monster.wanderTimer = rand(3, 6);
+                }
+
+                const dir = monster.wanderTarget.sub(monster.pos);
+                if (dir.len() > 10) {
+                    monster.pos = monster.pos.add(dir.unit().scale(MONSTER_SPEED * dt()));
+                }
             }
-        } else {
-            // Wander randomly - spread out across the play area
-            monster.wanderTimer -= dt();
 
-            if (monster.wanderTimer <= 0 || !monster.wanderTarget) {
-                // Pick a random spot, but avoid the center to spread out
-                // Divide screen into regions and pick randomly
-                const regions = [
-                    { x: [80, 250], y: [220, 400] },   // Left
-                    { x: [550, 720], y: [220, 400] }, // Right
-                    { x: [250, 550], y: [350, 520] }, // Bottom middle
-                    { x: [250, 550], y: [220, 320] }, // Top middle
-                ];
-                const region = choose(regions);
-                monster.wanderTarget = vec2(
-                    rand(region.x[0], region.x[1]),
-                    rand(region.y[0], region.y[1])
-                );
-                monster.wanderTimer = rand(3, 6);
-            }
+            // Keep monster in bounds
+            monster.pos.x = clamp(monster.pos.x, 30, 770);
+            monster.pos.y = clamp(monster.pos.y, 30, 570);
+        }
 
-            const dir = monster.wanderTarget.sub(monster.pos);
-            if (dir.len() > 10) {
-                monster.pos = monster.pos.add(dir.unit().scale(MONSTER_SPEED * dt()));
+        // Monster animations (always run)
+        monster.animTime += dt();
+
+        // Animate antennae (wiggle)
+        if (monster.antennae.length > 0) {
+            const wiggle = Math.sin(monster.animTime * 5) * 4;
+            monster.antennae.forEach((ant, i) => {
+                const dir = i === 0 ? -1 : 1;
+                ant.pos = monster.pos.add(vec2(dir * 12 + wiggle * dir, -30 + Math.abs(wiggle) * 0.5));
+            });
+        }
+
+        // Blink animation
+        monster.blinkTimer -= dt();
+        if (monster.blinkTimer <= 0 && !monster.isBlinking) {
+            monster.isBlinking = true;
+            monster.blinkDuration = 0.15;
+            // Show blink lids
+            monster.eyeLids.forEach(lid => lid.opacity = 1);
+        }
+        if (monster.isBlinking) {
+            monster.blinkDuration -= dt();
+            if (monster.blinkDuration <= 0) {
+                monster.isBlinking = false;
+                monster.blinkTimer = rand(2, 5);
+                // Hide blink lids
+                monster.eyeLids.forEach(lid => lid.opacity = 0);
             }
         }
 
-        // Keep monster in bounds
-        monster.pos.x = clamp(monster.pos.x, 30, 770);
-        monster.pos.y = clamp(monster.pos.y, 30, 570);
+        // Mouth animation (subtle open/close)
+        if (monster.mouth && monster.mouth.exists()) {
+            const mouthScale = 1 + Math.sin(monster.animTime * 2) * 0.1;
+            monster.mouth.scale = vec2(1, mouthScale);
+        }
     });
 
     // Zone collision detection
@@ -1037,6 +1220,8 @@ scene("game", () => {
                         const checkDancesDone = () => {
                             dancesDone++;
                             if (dancesDone === 2) {
+                                // Change target zone number for next challenge
+                                updateZoneTarget(zone);
                                 runOffScreen(m1);
                                 runOffScreen(m2);
                             }
