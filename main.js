@@ -1,0 +1,1158 @@
+import kaboom from "https://unpkg.com/kaboom@3000.1.17/dist/kaboom.mjs";
+
+// Initialize Kaboom
+const k = kaboom({
+    width: 800,
+    height: 600,
+    background: [135, 206, 235], // Sky blue
+    scale: 1,
+    crisp: true,
+});
+
+// Game constants
+const PLAYER_SPEED = 300;
+const MONSTER_SPEED = 60;
+const MONSTER_CHASE_SPEED = 280;
+const ZONE_CHECK_DELAY = 1.0; // seconds to wait before checking sum
+const MAX_FOLLOWING = 2; // Maximum monsters that can follow at once
+
+// Monster design configurations
+const MONSTER_DESIGNS = [
+    {
+        name: "Blobby",
+        bodyColor: [255, 150, 180], // Pink
+        bodyShape: "circle",
+        eyeStyle: "big",
+        feature: "antennae",
+        expression: "happy"
+    },
+    {
+        name: "Ziggy",
+        bodyColor: [150, 255, 170], // Green
+        bodyShape: "square",
+        eyeStyle: "sleepy",
+        feature: "horns",
+        expression: "silly"
+    },
+    {
+        name: "Puff",
+        bodyColor: [150, 180, 255], // Blue
+        bodyShape: "circle",
+        eyeStyle: "wide",
+        feature: "spots",
+        expression: "surprised"
+    },
+    {
+        name: "Sunny",
+        bodyColor: [255, 230, 130], // Yellow
+        bodyShape: "square",
+        eyeStyle: "big",
+        feature: "spikes",
+        expression: "happy"
+    },
+    {
+        name: "Tangy",
+        bodyColor: [255, 180, 130], // Orange
+        bodyShape: "circle",
+        eyeStyle: "small",
+        feature: "ears",
+        expression: "wink"
+    },
+    {
+        name: "Grape",
+        bodyColor: [200, 160, 255], // Purple
+        bodyShape: "square",
+        eyeStyle: "big",
+        feature: "bow",
+        expression: "happy"
+    },
+    {
+        name: "Minty",
+        bodyColor: [160, 255, 220], // Mint
+        bodyShape: "circle",
+        eyeStyle: "wide",
+        feature: "antennae",
+        expression: "silly"
+    },
+    {
+        name: "Coral",
+        bodyColor: [255, 160, 160], // Coral
+        bodyShape: "square",
+        eyeStyle: "sleepy",
+        feature: "freckles",
+        expression: "content"
+    }
+];
+
+// Game state
+let score = 0;
+let monstersInZones = new Map(); // zone -> [monsters]
+let usedDesigns = []; // Track which designs are currently on screen
+let targetSums = []; // Store target sums for validation
+
+// Draw simple grass background
+function drawBackground() {
+    // Grass
+    add([
+        rect(800, 400),
+        pos(0, 200),
+        color(120, 200, 80),
+        z(-10),
+    ]);
+
+    // Some decorative elements
+    for (let i = 0; i < 10; i++) {
+        add([
+            circle(rand(5, 15)),
+            pos(rand(50, 750), rand(250, 550)),
+            color(100, 180, 60),
+            z(-5),
+        ]);
+    }
+}
+
+// Create the player (kid character)
+function createPlayer() {
+    const player = add([
+        circle(20),
+        pos(400, 300),
+        color(255, 220, 180), // Skin tone
+        area({ width: 40, height: 40, offset: vec2(-20, -20) }),
+        "player",
+        {
+            direction: vec2(0, 0),
+        }
+    ]);
+
+    // Add a face to the player
+    add([
+        text("^_^", { size: 16 }),
+        pos(0, 0),
+        color(50, 50, 50),
+        z(1),
+        follow(player, vec2(-12, -8)),
+    ]);
+
+    // Add a hat/hair
+    add([
+        circle(12),
+        pos(0, 0),
+        color(139, 69, 19), // Brown hair
+        z(0),
+        follow(player, vec2(0, -18)),
+    ]);
+
+    return player;
+}
+
+// Get an unused monster design
+function getAvailableDesign() {
+    const available = MONSTER_DESIGNS.filter((d, i) => !usedDesigns.includes(i));
+    if (available.length === 0) {
+        // All designs used, pick any
+        return randi(0, MONSTER_DESIGNS.length);
+    }
+    const design = choose(available);
+    return MONSTER_DESIGNS.indexOf(design);
+}
+
+// Create a monster with a number and unique design
+function createMonster(number, startPos, designIndex = null) {
+    // Get a unique design
+    if (designIndex === null) {
+        designIndex = getAvailableDesign();
+    }
+    usedDesigns.push(designIndex);
+    const design = MONSTER_DESIGNS[designIndex];
+
+    // Create body based on shape
+    const bodySize = 25;
+    let bodyComponent;
+    if (design.bodyShape === "circle") {
+        bodyComponent = circle(bodySize);
+    } else {
+        bodyComponent = rect(bodySize * 2, bodySize * 2, { radius: 8 });
+    }
+
+    const monster = add([
+        bodyComponent,
+        pos(startPos || vec2(rand(100, 700), rand(250, 500))),
+        color(...design.bodyColor),
+        area({ width: 50, height: 50, offset: vec2(-25, -25) }),
+        anchor("center"),
+        "monster",
+        {
+            number: number,
+            designIndex: designIndex,
+            wanderTarget: null,
+            wanderTimer: 0,
+            isFollowing: false,
+            inZone: null,
+            isDancing: false,
+            isBumping: false,
+            attachments: [], // Track attached elements for cleanup
+        }
+    ]);
+
+    // Add features based on design
+    addMonsterFeatures(monster, design);
+    addMonsterEyes(monster, design);
+    addMonsterExpression(monster, design);
+
+    // Add the number display (in a bubble)
+    const numBubble = add([
+        circle(18),
+        pos(0, 0),
+        color(255, 255, 255),
+        opacity(0.9),
+        z(3),
+        anchor("center"),
+        follow(monster, vec2(0, 40)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(numBubble);
+
+    const numText = add([
+        text(String(number), { size: 24 }),
+        pos(0, 0),
+        color(50, 50, 50),
+        anchor("center"),
+        z(4),
+        follow(monster, vec2(0, 40)),
+        "monsterNumber",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(numText);
+
+    return monster;
+}
+
+// Add unique features (antennae, horns, etc.)
+function addMonsterFeatures(monster, design) {
+    const darkColor = design.bodyColor.map(c => Math.max(0, c - 60));
+
+    switch (design.feature) {
+        case "antennae":
+            // Two bouncy antennae
+            const ant1 = add([
+                circle(6),
+                pos(0, 0),
+                color(...darkColor),
+                z(0),
+                follow(monster, vec2(-12, -30)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(ant1);
+            const ant2 = add([
+                circle(6),
+                pos(0, 0),
+                color(...darkColor),
+                z(0),
+                follow(monster, vec2(12, -30)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(ant2);
+            // Antenna stalks
+            const stalk1 = add([
+                rect(3, 15),
+                pos(0, 0),
+                color(...darkColor),
+                z(-1),
+                anchor("bot"),
+                follow(monster, vec2(-12, -22)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(stalk1);
+            const stalk2 = add([
+                rect(3, 15),
+                pos(0, 0),
+                color(...darkColor),
+                z(-1),
+                anchor("bot"),
+                follow(monster, vec2(12, -22)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(stalk2);
+            break;
+
+        case "horns":
+            // Two small horns
+            const horn1 = add([
+                polygon([vec2(0, 0), vec2(-8, -18), vec2(8, 0)]),
+                pos(0, 0),
+                color(255, 220, 180),
+                z(0),
+                follow(monster, vec2(-15, -18)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(horn1);
+            const horn2 = add([
+                polygon([vec2(0, 0), vec2(8, -18), vec2(16, 0)]),
+                pos(0, 0),
+                color(255, 220, 180),
+                z(0),
+                follow(monster, vec2(7, -18)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(horn2);
+            break;
+
+        case "spots":
+            // Decorative spots on body
+            const spotPositions = [[-10, -5], [8, 3], [-5, 10], [12, -8]];
+            spotPositions.forEach(([sx, sy]) => {
+                const spot = add([
+                    circle(4),
+                    pos(0, 0),
+                    color(...darkColor),
+                    opacity(0.5),
+                    z(1),
+                    follow(monster, vec2(sx, sy)),
+                    "monsterPart",
+                    { parentMonster: monster }
+                ]);
+                monster.attachments.push(spot);
+            });
+            break;
+
+        case "spikes":
+            // Crown of small spikes
+            for (let i = 0; i < 5; i++) {
+                const angle = (i - 2) * 25;
+                const rad = angle * Math.PI / 180;
+                const spike = add([
+                    polygon([vec2(0, 0), vec2(-4, -12), vec2(4, 0)]),
+                    pos(0, 0),
+                    color(255, 200, 100),
+                    z(0),
+                    follow(monster, vec2(Math.sin(rad) * 20, -22 - Math.abs(i - 2) * 2)),
+                    "monsterPart",
+                    { parentMonster: monster }
+                ]);
+                monster.attachments.push(spike);
+            }
+            break;
+
+        case "ears":
+            // Cute round ears
+            const ear1 = add([
+                circle(10),
+                pos(0, 0),
+                color(...design.bodyColor),
+                z(-1),
+                follow(monster, vec2(-22, -15)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(ear1);
+            const ear2 = add([
+                circle(10),
+                pos(0, 0),
+                color(...design.bodyColor),
+                z(-1),
+                follow(monster, vec2(22, -15)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(ear2);
+            // Inner ears
+            const inner1 = add([
+                circle(5),
+                pos(0, 0),
+                color(255, 200, 200),
+                z(0),
+                follow(monster, vec2(-22, -15)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(inner1);
+            const inner2 = add([
+                circle(5),
+                pos(0, 0),
+                color(255, 200, 200),
+                z(0),
+                follow(monster, vec2(22, -15)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(inner2);
+            break;
+
+        case "bow":
+            // Cute bow on top
+            const bow1 = add([
+                circle(8),
+                pos(0, 0),
+                color(255, 100, 150),
+                z(1),
+                follow(monster, vec2(-10, -28)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(bow1);
+            const bow2 = add([
+                circle(8),
+                pos(0, 0),
+                color(255, 100, 150),
+                z(1),
+                follow(monster, vec2(10, -28)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(bow2);
+            const bowCenter = add([
+                circle(5),
+                pos(0, 0),
+                color(255, 50, 100),
+                z(2),
+                follow(monster, vec2(0, -28)),
+                "monsterPart",
+                { parentMonster: monster }
+            ]);
+            monster.attachments.push(bowCenter);
+            break;
+
+        case "freckles":
+            // Cute freckles on cheeks
+            const frecklePositions = [[-15, 5], [-12, 8], [-18, 8], [15, 5], [12, 8], [18, 8]];
+            frecklePositions.forEach(([fx, fy]) => {
+                const freckle = add([
+                    circle(2),
+                    pos(0, 0),
+                    color(...darkColor),
+                    z(2),
+                    follow(monster, vec2(fx, fy)),
+                    "monsterPart",
+                    { parentMonster: monster }
+                ]);
+                monster.attachments.push(freckle);
+            });
+            break;
+    }
+}
+
+// Add eyes based on style
+function addMonsterEyes(monster, design) {
+    let eyeSize, pupilSize, eyeOffset;
+
+    switch (design.eyeStyle) {
+        case "big":
+            eyeSize = 10;
+            pupilSize = 5;
+            eyeOffset = 10;
+            break;
+        case "small":
+            eyeSize = 6;
+            pupilSize = 3;
+            eyeOffset = 8;
+            break;
+        case "wide":
+            eyeSize = 8;
+            pupilSize = 4;
+            eyeOffset = 14;
+            break;
+        case "sleepy":
+            eyeSize = 7;
+            pupilSize = 4;
+            eyeOffset = 10;
+            break;
+        default:
+            eyeSize = 8;
+            pupilSize = 4;
+            eyeOffset = 10;
+    }
+
+    // White of eyes
+    const eye1 = add([
+        circle(eyeSize),
+        pos(0, 0),
+        color(255, 255, 255),
+        z(1),
+        follow(monster, vec2(-eyeOffset, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(eye1);
+
+    const eye2 = add([
+        circle(eyeSize),
+        pos(0, 0),
+        color(255, 255, 255),
+        z(1),
+        follow(monster, vec2(eyeOffset, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(eye2);
+
+    // Pupils
+    const pupil1 = add([
+        circle(pupilSize),
+        pos(0, 0),
+        color(30, 30, 30),
+        z(2),
+        follow(monster, vec2(-eyeOffset + 2, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(pupil1);
+
+    const pupil2 = add([
+        circle(pupilSize),
+        pos(0, 0),
+        color(30, 30, 30),
+        z(2),
+        follow(monster, vec2(eyeOffset + 2, -5)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(pupil2);
+
+    // Sleepy eyes get half-closed lids
+    if (design.eyeStyle === "sleepy") {
+        const lid1 = add([
+            rect(eyeSize * 2, eyeSize),
+            pos(0, 0),
+            color(...design.bodyColor),
+            z(3),
+            anchor("center"),
+            follow(monster, vec2(-eyeOffset, -8)),
+            "monsterPart",
+            { parentMonster: monster }
+        ]);
+        monster.attachments.push(lid1);
+
+        const lid2 = add([
+            rect(eyeSize * 2, eyeSize),
+            pos(0, 0),
+            color(...design.bodyColor),
+            z(3),
+            anchor("center"),
+            follow(monster, vec2(eyeOffset, -8)),
+            "monsterPart",
+            { parentMonster: monster }
+        ]);
+        monster.attachments.push(lid2);
+    }
+
+    // Eye shine
+    const shine1 = add([
+        circle(2),
+        pos(0, 0),
+        color(255, 255, 255),
+        z(3),
+        follow(monster, vec2(-eyeOffset - 1, -7)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(shine1);
+
+    const shine2 = add([
+        circle(2),
+        pos(0, 0),
+        color(255, 255, 255),
+        z(3),
+        follow(monster, vec2(eyeOffset - 1, -7)),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(shine2);
+}
+
+// Add expression (mouth)
+function addMonsterExpression(monster, design) {
+    let mouthText, mouthSize, mouthOffset;
+
+    switch (design.expression) {
+        case "happy":
+            mouthText = "ᴗ";
+            mouthSize = 16;
+            mouthOffset = vec2(0, 10);
+            break;
+        case "silly":
+            mouthText = "ᗜ";
+            mouthSize = 18;
+            mouthOffset = vec2(0, 10);
+            break;
+        case "surprised":
+            mouthText = "○";
+            mouthSize = 14;
+            mouthOffset = vec2(0, 12);
+            break;
+        case "wink":
+            mouthText = "ᴗ";
+            mouthSize = 14;
+            mouthOffset = vec2(0, 10);
+            break;
+        case "content":
+            mouthText = "‿";
+            mouthSize = 16;
+            mouthOffset = vec2(0, 12);
+            break;
+        default:
+            mouthText = "ᴗ";
+            mouthSize = 14;
+            mouthOffset = vec2(0, 10);
+    }
+
+    const mouth = add([
+        text(mouthText, { size: mouthSize }),
+        pos(0, 0),
+        color(80, 50, 50),
+        anchor("center"),
+        z(2),
+        follow(monster, mouthOffset),
+        "monsterPart",
+        { parentMonster: monster }
+    ]);
+    monster.attachments.push(mouth);
+
+    // Wink expression - add closed eye
+    if (design.expression === "wink") {
+        const winkEye = add([
+            text("−", { size: 14 }),
+            pos(0, 0),
+            color(30, 30, 30),
+            anchor("center"),
+            z(4),
+            follow(monster, vec2(-10, -5)),
+            "monsterPart",
+            { parentMonster: monster }
+        ]);
+        monster.attachments.push(winkEye);
+    }
+}
+
+// Clean up monster attachments when destroyed
+function cleanupMonster(monster) {
+    // Remove design from used list
+    const idx = usedDesigns.indexOf(monster.designIndex);
+    if (idx > -1) {
+        usedDesigns.splice(idx, 1);
+    }
+
+    // Destroy all attached parts
+    if (monster.attachments) {
+        monster.attachments.forEach(part => {
+            if (part.exists()) destroy(part);
+        });
+    }
+
+    // Also clean up by tag (backup)
+    get("monsterPart").forEach(part => {
+        if (part.parentMonster === monster) {
+            destroy(part);
+        }
+    });
+    get("monsterNumber").forEach(part => {
+        if (part.parentMonster === monster) {
+            destroy(part);
+        }
+    });
+}
+
+// Get current monster numbers on the field
+function getCurrentNumbers() {
+    return get("monster")
+        .filter(m => !m.isDancing && !m.isBumping)
+        .map(m => m.number);
+}
+
+// Check if any valid pair exists for the target sums
+function hasValidPair(numbers, targets) {
+    for (let i = 0; i < numbers.length; i++) {
+        for (let j = i + 1; j < numbers.length; j++) {
+            if (targets.includes(numbers[i] + numbers[j])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Find a number that creates a valid pair with existing numbers
+function findValidNumber(existingNumbers, targets) {
+    const possibleNumbers = [];
+    for (const target of targets) {
+        for (const existing of existingNumbers) {
+            const needed = target - existing;
+            if (needed >= 1 && needed <= 5) {
+                possibleNumbers.push(needed);
+            }
+        }
+    }
+    if (possibleNumbers.length > 0) {
+        return choose(possibleNumbers);
+    }
+    return randi(1, 6);
+}
+
+// Spawn a monster ensuring at least one valid pair exists
+function spawnMonsterSmart() {
+    const currentNumbers = getCurrentNumbers();
+    let newNumber;
+
+    // If we have few monsters or no valid pairs, create a valid pair
+    if (currentNumbers.length < 2 || !hasValidPair(currentNumbers, targetSums)) {
+        newNumber = findValidNumber(currentNumbers, targetSums);
+    } else {
+        // Random chance to either create another valid option or random
+        if (rand() < 0.6) {
+            newNumber = findValidNumber(currentNumbers, targetSums);
+        } else {
+            newNumber = randi(1, 6);
+        }
+    }
+
+    return createMonster(newNumber);
+}
+
+// Create a target zone (star shape)
+function createTargetZone(targetSum, position) {
+    // Main zone background
+    const zone = add([
+        circle(60),
+        pos(position),
+        color(255, 255, 100),
+        opacity(0.6),
+        area({ width: 120, height: 120, offset: vec2(-60, -60) }),
+        "targetZone",
+        {
+            targetSum: targetSum,
+            checkTimer: 0,
+            isChecking: false,
+        }
+    ]);
+
+    // Star decoration points
+    for (let i = 0; i < 5; i++) {
+        const angle = (i * 72 - 90) * Math.PI / 180;
+        const pointX = Math.cos(angle) * 50;
+        const pointY = Math.sin(angle) * 50;
+        add([
+            polygon([vec2(0, 0), vec2(-10, 25), vec2(10, 25)]),
+            pos(position.x + pointX, position.y + pointY),
+            color(255, 220, 50),
+            rotate(i * 72),
+            z(-1),
+        ]);
+    }
+
+    // Target number display
+    add([
+        text(String(targetSum), { size: 36 }),
+        pos(position),
+        color(100, 50, 0),
+        anchor("center"),
+        z(5),
+    ]);
+
+    monstersInZones.set(zone, []);
+
+    return zone;
+}
+
+// Spawn sparkle particles for celebration
+function spawnSparkles(position) {
+    for (let i = 0; i < 12; i++) {
+        const angle = (i * 30) * Math.PI / 180;
+        const sparkle = add([
+            circle(rand(4, 8)),
+            pos(position),
+            color(255, 255, rand(100, 255)),
+            opacity(1),
+            z(10),
+            {
+                vel: vec2(Math.cos(angle) * rand(100, 200), Math.sin(angle) * rand(100, 200)),
+                life: 1,
+            }
+        ]);
+
+        sparkle.onUpdate(() => {
+            sparkle.pos = sparkle.pos.add(sparkle.vel.scale(dt()));
+            sparkle.life -= dt();
+            sparkle.opacity = sparkle.life;
+            if (sparkle.life <= 0) {
+                destroy(sparkle);
+            }
+        });
+    }
+}
+
+// Happy dance animation
+function doHappyDance(monster, zone, onComplete) {
+    monster.isDancing = true;
+    const startPos = monster.pos.clone();
+    let danceTime = 0;
+
+    const danceUpdate = monster.onUpdate(() => {
+        danceTime += dt() * 8;
+        monster.pos.x = startPos.x + Math.sin(danceTime) * 15;
+        monster.pos.y = startPos.y + Math.abs(Math.sin(danceTime * 2)) * -10;
+
+        if (danceTime > Math.PI * 4) {
+            danceUpdate.cancel();
+            onComplete();
+        }
+    });
+}
+
+// Bump animation (failure)
+function doBumpAnimation(monster1, monster2, onComplete) {
+    monster1.isBumping = true;
+    monster2.isBumping = true;
+
+    const center = monster1.pos.add(monster2.pos).scale(0.5);
+    const dir1 = monster1.pos.sub(center).unit();
+    const dir2 = monster2.pos.sub(center).unit();
+
+    // Move them together first
+    let bumpPhase = 0;
+    const bumpUpdate = onUpdate(() => {
+        bumpPhase += dt() * 6;
+
+        if (bumpPhase < Math.PI) {
+            // Move together
+            monster1.pos = monster1.pos.add(dir2.scale(80 * dt()));
+            monster2.pos = monster2.pos.add(dir1.scale(80 * dt()));
+        } else if (bumpPhase < Math.PI * 3) {
+            // Bounce apart
+            monster1.pos = monster1.pos.add(dir1.scale(120 * dt()));
+            monster2.pos = monster2.pos.add(dir2.scale(120 * dt()));
+        } else {
+            bumpUpdate.cancel();
+            monster1.isBumping = false;
+            monster2.isBumping = false;
+            monster1.inZone = null;
+            monster2.inZone = null;
+            monster1.isFollowing = false;
+            monster2.isFollowing = false;
+            onComplete();
+        }
+    });
+}
+
+// Monster runs off screen
+function runOffScreen(monster) {
+    const edge = choose([
+        vec2(-50, monster.pos.y),
+        vec2(850, monster.pos.y),
+        vec2(monster.pos.x, -50),
+        vec2(monster.pos.x, 650),
+    ]);
+
+    const dir = edge.sub(monster.pos).unit();
+
+    const runUpdate = monster.onUpdate(() => {
+        monster.pos = monster.pos.add(dir.scale(MONSTER_CHASE_SPEED * 2 * dt()));
+
+        if (monster.pos.x < -60 || monster.pos.x > 860 ||
+            monster.pos.y < -60 || monster.pos.y > 660) {
+            // Clean up all attached elements
+            cleanupMonster(monster);
+            destroy(monster);
+            runUpdate.cancel();
+
+            // Spawn a new monster after a delay using smart spawning
+            wait(1, () => {
+                spawnMonsterSmart();
+            });
+        }
+    });
+}
+
+// Main game scene
+scene("game", () => {
+    // Reset game state
+    usedDesigns = [];
+    targetSums = [4, 5, 7]; // Store our target sums
+
+    drawBackground();
+
+    // Create player
+    const player = createPlayer();
+
+    // Create target zones
+    createTargetZone(5, vec2(100, 150));
+    createTargetZone(7, vec2(700, 150));
+    createTargetZone(4, vec2(400, 550));
+
+    // Create initial monsters with guaranteed valid pairs
+    // First, create a pair that adds up to one of the targets
+    const firstTarget = choose(targetSums);
+    const firstNum = randi(1, Math.min(5, firstTarget - 1));
+    const secondNum = firstTarget - firstNum;
+    createMonster(firstNum);
+    createMonster(secondNum);
+
+    // Then add more monsters using smart spawning
+    for (let i = 0; i < 3; i++) {
+        spawnMonsterSmart();
+    }
+
+    // Player follows mouse
+    onUpdate(() => {
+        const mpos = mousePos();
+        const dir = mpos.sub(player.pos);
+
+        // Only move if mouse is far enough from player
+        if (dir.len() > 10) {
+            const moveDir = dir.unit();
+            const speed = Math.min(dir.len() * 3, PLAYER_SPEED);
+            player.pos = player.pos.add(moveDir.scale(speed * dt()));
+            player.direction = moveDir;
+        }
+
+        // Keep player in bounds
+        player.pos.x = clamp(player.pos.x, 30, 770);
+        player.pos.y = clamp(player.pos.y, 30, 570);
+    });
+
+    // Count how many monsters are currently following
+    function countFollowing() {
+        let count = 0;
+        get("monster").forEach(m => {
+            if (m.isFollowing && !m.isDancing && !m.isBumping) count++;
+        });
+        return count;
+    }
+
+    // Player bumps into monster - make it follow
+    player.onCollide("monster", (monster) => {
+        if (!monster.isFollowing && !monster.isDancing && !monster.isBumping) {
+            if (countFollowing() < MAX_FOLLOWING) {
+                monster.isFollowing = true;
+            }
+        }
+    });
+
+    // Visual indicator for following monsters
+    onDraw(() => {
+        get("monster").forEach((monster) => {
+            if (monster.isFollowing && !monster.isDancing && !monster.isBumping) {
+                // Draw a glowing ring around following monsters
+                drawCircle({
+                    pos: monster.pos,
+                    radius: 35,
+                    outline: { color: rgb(255, 255, 255), width: 3 },
+                    fill: false,
+                });
+            }
+        });
+    });
+
+    // Monster behavior
+    onUpdate("monster", (monster) => {
+        if (monster.isDancing || monster.isBumping) return;
+
+        if (monster.isFollowing) {
+            // Follow the player
+            const dir = player.pos.sub(monster.pos);
+            if (dir.len() > 40) { // Keep some distance from player
+                monster.pos = monster.pos.add(dir.unit().scale(MONSTER_CHASE_SPEED * dt()));
+            }
+        } else {
+            // Wander randomly - spread out across the play area
+            monster.wanderTimer -= dt();
+
+            if (monster.wanderTimer <= 0 || !monster.wanderTarget) {
+                // Pick a random spot, but avoid the center to spread out
+                // Divide screen into regions and pick randomly
+                const regions = [
+                    { x: [80, 250], y: [220, 400] },   // Left
+                    { x: [550, 720], y: [220, 400] }, // Right
+                    { x: [250, 550], y: [350, 520] }, // Bottom middle
+                    { x: [250, 550], y: [220, 320] }, // Top middle
+                ];
+                const region = choose(regions);
+                monster.wanderTarget = vec2(
+                    rand(region.x[0], region.x[1]),
+                    rand(region.y[0], region.y[1])
+                );
+                monster.wanderTimer = rand(3, 6);
+            }
+
+            const dir = monster.wanderTarget.sub(monster.pos);
+            if (dir.len() > 10) {
+                monster.pos = monster.pos.add(dir.unit().scale(MONSTER_SPEED * dt()));
+            }
+        }
+
+        // Keep monster in bounds
+        monster.pos.x = clamp(monster.pos.x, 30, 770);
+        monster.pos.y = clamp(monster.pos.y, 30, 570);
+    });
+
+    // Zone collision detection
+    onUpdate("targetZone", (zone) => {
+        const monstersNearby = [];
+
+        get("monster").forEach((monster) => {
+            if (monster.isDancing || monster.isBumping) return;
+
+            const dist = monster.pos.dist(zone.pos);
+            if (dist < 70) {
+                monstersNearby.push(monster);
+                monster.inZone = zone;
+            } else if (monster.inZone === zone) {
+                monster.inZone = null;
+            }
+        });
+
+        monstersInZones.set(zone, monstersNearby);
+
+        // Check for two monsters in zone
+        if (monstersNearby.length >= 2 && !zone.isChecking) {
+            zone.isChecking = true;
+            zone.checkTimer = ZONE_CHECK_DELAY;
+        }
+
+        if (zone.isChecking) {
+            zone.checkTimer -= dt();
+
+            if (zone.checkTimer <= 0) {
+                zone.isChecking = false;
+
+                // Get the first two monsters
+                const m1 = monstersNearby[0];
+                const m2 = monstersNearby[1];
+
+                if (m1 && m2 && !m1.isDancing && !m2.isDancing) {
+                    const sum = m1.number + m2.number;
+
+                    if (sum === zone.targetSum) {
+                        // Success!
+                        score += 10;
+                        spawnSparkles(zone.pos);
+
+                        // Happy dance then run off
+                        let dancesDone = 0;
+                        const checkDancesDone = () => {
+                            dancesDone++;
+                            if (dancesDone === 2) {
+                                runOffScreen(m1);
+                                runOffScreen(m2);
+                            }
+                        };
+
+                        doHappyDance(m1, zone, checkDancesDone);
+                        doHappyDance(m2, zone, checkDancesDone);
+                    } else {
+                        // Failure - bump and scatter
+                        doBumpAnimation(m1, m2, () => {
+                            // Give them new wander targets away from zone
+                            m1.wanderTarget = vec2(rand(100, 700), rand(300, 500));
+                            m2.wanderTarget = vec2(rand(100, 700), rand(300, 500));
+                        });
+                    }
+                }
+            }
+        }
+    });
+
+    // Score display
+    add([
+        text("Score: 0", { size: 24 }),
+        pos(20, 20),
+        color(255, 255, 255),
+        z(100),
+        { update() { this.text = `Score: ${score}`; } }
+    ]);
+
+    // Instructions
+    add([
+        text("Move mouse to guide your character. Bump into monsters to collect them!", { size: 14 }),
+        pos(400, 580),
+        anchor("center"),
+        color(50, 50, 50),
+        z(100),
+    ]);
+});
+
+// Title screen
+scene("title", () => {
+    add([
+        rect(800, 600),
+        color(135, 206, 235),
+    ]);
+
+    add([
+        text("MONSTER MATH", { size: 64 }),
+        pos(400, 200),
+        anchor("center"),
+        color(255, 100, 100),
+    ]);
+
+    add([
+        text("Help friendly monsters learn addition!", { size: 24 }),
+        pos(400, 280),
+        anchor("center"),
+        color(80, 80, 80),
+    ]);
+
+    // Animated monster on title screen
+    const titleMonster = add([
+        circle(40),
+        pos(400, 380),
+        color(150, 255, 150),
+    ]);
+
+    add([
+        circle(12),
+        pos(0, 0),
+        color(255, 255, 255),
+        follow(titleMonster, vec2(-12, -8)),
+    ]);
+    add([
+        circle(12),
+        pos(0, 0),
+        color(255, 255, 255),
+        follow(titleMonster, vec2(12, -8)),
+    ]);
+    add([
+        circle(6),
+        pos(0, 0),
+        color(0, 0, 0),
+        follow(titleMonster, vec2(-10, -8)),
+    ]);
+    add([
+        circle(6),
+        pos(0, 0),
+        color(0, 0, 0),
+        follow(titleMonster, vec2(14, -8)),
+    ]);
+    add([
+        text("3", { size: 32 }),
+        pos(0, 0),
+        anchor("center"),
+        color(50, 50, 50),
+        follow(titleMonster, vec2(0, 45)),
+    ]);
+
+    // Bounce animation
+    let t = 0;
+    titleMonster.onUpdate(() => {
+        t += dt() * 3;
+        titleMonster.pos.y = 380 + Math.sin(t) * 15;
+    });
+
+    add([
+        text("Press SPACE or Click to Start", { size: 28 }),
+        pos(400, 500),
+        anchor("center"),
+        color(100, 100, 100),
+    ]);
+
+    onKeyPress("space", () => go("game"));
+    onClick(() => go("game"));
+});
+
+// Start with title screen
+go("title");
