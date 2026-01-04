@@ -1,34 +1,51 @@
 import kaboom from "https://unpkg.com/kaboom@3000.1.17/dist/kaboom.mjs";
 
+// Device detection
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || (window.innerWidth <= 768);
+const isPortrait = window.innerHeight > window.innerWidth;
+
+// Game dimensions based on device
+// Desktop: 800x600 (landscape)
+// Mobile portrait: 500x750 (taller for phones)
+// Mobile landscape: 800x600
+const GAME_WIDTH = (isMobile && isPortrait) ? 500 : 800;
+const GAME_HEIGHT = (isMobile && isPortrait) ? 750 : 600;
+
 // Calculate responsive canvas size
 function getGameDimensions() {
-    const baseWidth = 800;
-    const baseHeight = 600;
+    const baseWidth = GAME_WIDTH;
+    const baseHeight = GAME_HEIGHT;
     const aspectRatio = baseWidth / baseHeight;
 
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
     const windowAspect = windowWidth / windowHeight;
 
-    let gameWidth, gameHeight, scale;
+    let scale;
 
-    // Maintain aspect ratio while fitting to screen
+    // Calculate scale to fit screen
     if (windowAspect > aspectRatio) {
         // Window is wider - fit to height
-        gameHeight = Math.min(baseHeight, windowHeight);
-        gameWidth = gameHeight * aspectRatio;
-        scale = gameHeight / baseHeight;
+        scale = windowHeight / baseHeight;
     } else {
         // Window is taller - fit to width
-        gameWidth = Math.min(baseWidth, windowWidth);
-        gameHeight = gameWidth / aspectRatio;
-        scale = gameWidth / baseWidth;
+        scale = windowWidth / baseWidth;
+    }
+
+    // Device-specific scale adjustments
+    if (isMobile) {
+        // Mobile: fill more of the screen (95%)
+        scale = scale * 0.95;
+    } else {
+        // Desktop: leave 15% border (85% of available space)
+        scale = scale * 0.85;
     }
 
     return {
         width: baseWidth,
         height: baseHeight,
-        scale: Math.max(0.5, Math.min(scale, 2)) // Limit scale between 0.5 and 2
+        scale: Math.max(0.5, Math.min(scale, 2))
     };
 }
 
@@ -46,15 +63,8 @@ const k = kaboom({
     letterbox: true,
 });
 
-// Handle window resize
-window.addEventListener('resize', () => {
-    const newDims = getGameDimensions();
-    // Kaboom doesn't support dynamic resize, but the letterbox/stretch should handle it
-    // For a full solution, you'd need to reload or use a custom scaling approach
-});
-
 // Touch/Mouse position tracker for mobile
-let currentPointerPos = vec2(400, 300);
+let currentPointerPos = vec2(GAME_WIDTH / 2, GAME_HEIGHT / 2);
 let isTouchDevice = false;
 
 // Detect touch device
@@ -145,10 +155,10 @@ let targetSums = []; // Store target sums for validation
 
 // Draw simple grass background
 function drawBackground() {
-    // Grass
+    // Grass (covers bottom 2/3 of screen)
     add([
-        rect(800, 400),
-        pos(0, 200),
+        rect(GAME_WIDTH, GAME_HEIGHT * 0.67),
+        pos(0, GAME_HEIGHT * 0.33),
         color(120, 200, 80),
         z(-10),
     ]);
@@ -157,7 +167,7 @@ function drawBackground() {
     for (let i = 0; i < 10; i++) {
         add([
             circle(rand(5, 15)),
-            pos(rand(50, 750), rand(250, 550)),
+            pos(rand(50, GAME_WIDTH - 50), rand(GAME_HEIGHT * 0.4, GAME_HEIGHT - 50)),
             color(100, 180, 60),
             z(-5),
         ]);
@@ -168,7 +178,7 @@ function drawBackground() {
 function createPlayer() {
     const player = add([
         circle(20),
-        pos(400, 300),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT / 2),
         color(255, 220, 180), // Skin tone
         area({ width: 40, height: 40, offset: vec2(-20, -20) }),
         "player",
@@ -280,7 +290,7 @@ function createMonster(number, startPos, designIndex = null) {
 
     const monster = add([
         bodyComponent,
-        pos(startPos || vec2(rand(100, 700), rand(250, 500))),
+        pos(startPos || vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.4, GAME_HEIGHT * 0.85))),
         color(...design.bodyColor),
         area({ width: 50, height: 50, offset: vec2(-25, -25) }),
         anchor("center"),
@@ -1013,9 +1023,9 @@ function doBumpAnimation(monster1, monster2, onComplete) {
 function runOffScreen(monster) {
     const edge = choose([
         vec2(-50, monster.pos.y),
-        vec2(850, monster.pos.y),
+        vec2(GAME_WIDTH + 50, monster.pos.y),
         vec2(monster.pos.x, -50),
-        vec2(monster.pos.x, 650),
+        vec2(monster.pos.x, GAME_HEIGHT + 50),
     ]);
 
     const dir = edge.sub(monster.pos).unit();
@@ -1023,8 +1033,8 @@ function runOffScreen(monster) {
     const runUpdate = monster.onUpdate(() => {
         monster.pos = monster.pos.add(dir.scale(MONSTER_CHASE_SPEED * 2 * dt()));
 
-        if (monster.pos.x < -60 || monster.pos.x > 860 ||
-            monster.pos.y < -60 || monster.pos.y > 660) {
+        if (monster.pos.x < -60 || monster.pos.x > GAME_WIDTH + 60 ||
+            monster.pos.y < -60 || monster.pos.y > GAME_HEIGHT + 60) {
             // Clean up all attached elements
             cleanupMonster(monster);
             destroy(monster);
@@ -1049,10 +1059,10 @@ scene("game", () => {
     // Create player
     const player = createPlayer();
 
-    // Create target zones
-    createTargetZone(5, vec2(100, 150));
-    createTargetZone(7, vec2(700, 150));
-    createTargetZone(4, vec2(400, 550));
+    // Create target zones (positioned relative to screen size)
+    createTargetZone(5, vec2(GAME_WIDTH * 0.12, GAME_HEIGHT * 0.2));
+    createTargetZone(7, vec2(GAME_WIDTH * 0.88, GAME_HEIGHT * 0.2));
+    createTargetZone(4, vec2(GAME_WIDTH / 2, GAME_HEIGHT * 0.88));
 
     // Create initial monsters with guaranteed valid pairs
     // First, create a pair that adds up to one of the targets
@@ -1075,8 +1085,8 @@ scene("game", () => {
             e.preventDefault();
             const touch = e.touches[0] || e.changedTouches[0];
             const rect = canvas.getBoundingClientRect();
-            const scaleX = 800 / rect.width;
-            const scaleY = 600 / rect.height;
+            const scaleX = GAME_WIDTH / rect.width;
+            const scaleY = GAME_HEIGHT / rect.height;
             currentPointerPos = vec2(
                 (touch.clientX - rect.left) * scaleX,
                 (touch.clientY - rect.top) * scaleY
@@ -1107,8 +1117,8 @@ scene("game", () => {
         }
 
         // Keep player in bounds
-        player.pos.x = clamp(player.pos.x, 30, 770);
-        player.pos.y = clamp(player.pos.y, 30, 570);
+        player.pos.x = clamp(player.pos.x, 30, GAME_WIDTH - 30);
+        player.pos.y = clamp(player.pos.y, 30, GAME_HEIGHT - 30);
 
         // Animate player
         player.animTime += dt() * 10;
@@ -1186,12 +1196,12 @@ scene("game", () => {
 
                 if (monster.wanderTimer <= 0 || !monster.wanderTarget) {
                     // Pick a random spot, but avoid the center to spread out
-                    // Divide screen into regions and pick randomly
+                    // Divide screen into regions and pick randomly (relative to screen size)
                     const regions = [
-                        { x: [80, 250], y: [220, 400] },   // Left
-                        { x: [550, 720], y: [220, 400] }, // Right
-                        { x: [250, 550], y: [350, 520] }, // Bottom middle
-                        { x: [250, 550], y: [220, 320] }, // Top middle
+                        { x: [GAME_WIDTH * 0.1, GAME_WIDTH * 0.35], y: [GAME_HEIGHT * 0.35, GAME_HEIGHT * 0.65] },   // Left
+                        { x: [GAME_WIDTH * 0.65, GAME_WIDTH * 0.9], y: [GAME_HEIGHT * 0.35, GAME_HEIGHT * 0.65] },  // Right
+                        { x: [GAME_WIDTH * 0.3, GAME_WIDTH * 0.7], y: [GAME_HEIGHT * 0.55, GAME_HEIGHT * 0.85] },   // Bottom middle
+                        { x: [GAME_WIDTH * 0.3, GAME_WIDTH * 0.7], y: [GAME_HEIGHT * 0.35, GAME_HEIGHT * 0.5] },    // Top middle
                     ];
                     const region = choose(regions);
                     monster.wanderTarget = vec2(
@@ -1208,8 +1218,8 @@ scene("game", () => {
             }
 
             // Keep monster in bounds
-            monster.pos.x = clamp(monster.pos.x, 30, 770);
-            monster.pos.y = clamp(monster.pos.y, 30, 570);
+            monster.pos.x = clamp(monster.pos.x, 30, GAME_WIDTH - 30);
+            monster.pos.y = clamp(monster.pos.y, 30, GAME_HEIGHT - 30);
         }
 
         // Monster animations (always run)
@@ -1309,8 +1319,8 @@ scene("game", () => {
                         // Failure - bump and scatter
                         doBumpAnimation(m1, m2, () => {
                             // Give them new wander targets away from zone
-                            m1.wanderTarget = vec2(rand(100, 700), rand(300, 500));
-                            m2.wanderTarget = vec2(rand(100, 700), rand(300, 500));
+                            m1.wanderTarget = vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.5, GAME_HEIGHT * 0.85));
+                            m2.wanderTarget = vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.5, GAME_HEIGHT * 0.85));
                         });
                     }
                 }
@@ -1335,7 +1345,7 @@ scene("game", () => {
 
     add([
         text(instructionText, { size: instructionSize }),
-        pos(400, 580),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT - 20),
         anchor("center"),
         color(50, 50, 50),
         z(100),
@@ -1345,28 +1355,33 @@ scene("game", () => {
 // Title screen
 scene("title", () => {
     add([
-        rect(800, 600),
+        rect(GAME_WIDTH, GAME_HEIGHT),
         color(135, 206, 235),
     ]);
 
+    // Title text - adjust size for mobile
+    const titleSize = isMobile ? 48 : 64;
+    const subtitleSize = isMobile ? 18 : 24;
+
     add([
-        text("MONSTER MATH", { size: 64 }),
-        pos(400, 200),
+        text("MONSTER MATH", { size: titleSize }),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.25),
         anchor("center"),
         color(255, 100, 100),
     ]);
 
     add([
-        text("Help friendly monsters learn addition!", { size: 24 }),
-        pos(400, 280),
+        text("Help friendly monsters learn addition!", { size: subtitleSize }),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.35),
         anchor("center"),
         color(80, 80, 80),
     ]);
 
     // Animated monster on title screen
+    const monsterY = GAME_HEIGHT * 0.55;
     const titleMonster = add([
         circle(40),
-        pos(400, 380),
+        pos(GAME_WIDTH / 2, monsterY),
         color(150, 255, 150),
     ]);
 
@@ -1406,7 +1421,7 @@ scene("title", () => {
     let t = 0;
     titleMonster.onUpdate(() => {
         t += dt() * 3;
-        titleMonster.pos.y = 380 + Math.sin(t) * 15;
+        titleMonster.pos.y = monsterY + Math.sin(t) * 15;
     });
 
     const startText = isTouchDevice
@@ -1415,7 +1430,7 @@ scene("title", () => {
 
     add([
         text(startText, { size: 28 }),
-        pos(400, 500),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.8),
         anchor("center"),
         color(100, 100, 100),
     ]);
