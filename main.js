@@ -212,6 +212,7 @@ function createPlayer() {
             animTime: 0,
             isMoving: false,
             bobOffset: 0,
+            isCelebrating: false,
         }
     ]);
 
@@ -897,6 +898,17 @@ function spawnMonsterSmart() {
 
 // Create a target zone (star shape)
 function createTargetZone(targetSum, position) {
+    // Glow ring (shows when monsters are inside)
+    const glowRing = add([
+        circle(70),
+        pos(position),
+        color(255, 255, 255),
+        opacity(0),
+        z(-2),
+        anchor("center"),
+        "zoneGlow",
+    ]);
+
     // Main zone background
     const zone = add([
         circle(60),
@@ -909,6 +921,10 @@ function createTargetZone(targetSum, position) {
             targetSum: targetSum,
             checkTimer: 0,
             isChecking: false,
+            glowRing: glowRing,
+            monstersInside: 0,
+            baseColor: { r: 255, g: 255, b: 100 },
+            pulseTime: 0,
         }
     ]);
 
@@ -991,20 +1007,127 @@ function spawnSparkles(position) {
     }
 }
 
-// Happy dance animation
-function doHappyDance(monster, zone, onComplete) {
+// Spawn confetti for big celebrations
+function spawnConfetti(position, count = 20) {
+    const confettiColors = [
+        [255, 100, 100], // Red
+        [100, 255, 100], // Green
+        [100, 100, 255], // Blue
+        [255, 255, 100], // Yellow
+        [255, 100, 255], // Pink
+        [100, 255, 255], // Cyan
+        [255, 180, 100], // Orange
+    ];
+
+    for (let i = 0; i < count; i++) {
+        const confettiColor = choose(confettiColors);
+        const confetti = add([
+            rect(rand(6, 12), rand(4, 8)),
+            pos(position),
+            color(...confettiColor),
+            opacity(1),
+            rotate(rand(0, 360)),
+            anchor("center"),
+            z(15),
+            {
+                vel: vec2(rand(-120, 120), rand(-250, -150)),
+                rotSpeed: rand(-400, 400),
+                life: rand(1.5, 2.5),
+                gravity: 300,
+            }
+        ]);
+
+        confetti.onUpdate(() => {
+            confetti.vel.y += confetti.gravity * dt();
+            confetti.pos = confetti.pos.add(confetti.vel.scale(dt()));
+            confetti.angle += confetti.rotSpeed * dt();
+            confetti.life -= dt();
+            if (confetti.life < 0.5) {
+                confetti.opacity = confetti.life * 2;
+            }
+            if (confetti.life <= 0) {
+                destroy(confetti);
+            }
+        });
+    }
+}
+
+// Celebration animation types
+const CELEBRATION_TYPES = ["circle_dance", "jump_wave", "spin_jump", "wiggle_hop"];
+
+// Varied celebration animation
+function doCelebration(monster, zone, onComplete) {
     monster.isDancing = true;
     const startPos = monster.pos.clone();
-    let danceTime = 0;
+    const celebrationType = choose(CELEBRATION_TYPES);
+    let celebTime = 0;
+    const duration = 1.5; // seconds
 
-    const danceUpdate = monster.onUpdate(() => {
-        danceTime += dt() * 8;
-        monster.pos.x = startPos.x + Math.sin(danceTime) * 15;
-        monster.pos.y = startPos.y + Math.abs(Math.sin(danceTime * 2)) * -10;
+    // Spawn some confetti from this monster
+    spawnConfetti(monster.pos, 8);
 
-        if (danceTime > Math.PI * 4) {
-            danceUpdate.cancel();
+    const celebUpdate = monster.onUpdate(() => {
+        celebTime += dt();
+        const progress = celebTime / duration;
+
+        switch (celebrationType) {
+            case "circle_dance":
+                // Run in a circle
+                const circleAngle = progress * Math.PI * 4;
+                const radius = 25;
+                monster.pos.x = startPos.x + Math.cos(circleAngle) * radius;
+                monster.pos.y = startPos.y + Math.sin(circleAngle) * radius * 0.6 - Math.abs(Math.sin(circleAngle * 2)) * 10;
+                break;
+
+            case "jump_wave":
+                // Jump up and down while swaying
+                monster.pos.x = startPos.x + Math.sin(progress * Math.PI * 6) * 20;
+                monster.pos.y = startPos.y - Math.abs(Math.sin(progress * Math.PI * 8)) * 30;
+                break;
+
+            case "spin_jump":
+                // Spin in place with hops
+                const spinAngle = progress * Math.PI * 3;
+                monster.pos.x = startPos.x + Math.sin(spinAngle) * 15;
+                monster.pos.y = startPos.y - Math.abs(Math.sin(progress * Math.PI * 6)) * 25;
+                break;
+
+            case "wiggle_hop":
+                // Quick side-to-side wiggles with small hops
+                monster.pos.x = startPos.x + Math.sin(progress * Math.PI * 12) * 12;
+                monster.pos.y = startPos.y - Math.abs(Math.sin(progress * Math.PI * 10)) * 15;
+                break;
+        }
+
+        if (celebTime >= duration) {
+            celebUpdate.cancel();
             onComplete();
+        }
+    });
+}
+
+// Kid celebration (player joins in!)
+function doKidCelebration(player, duration = 1.5) {
+    const startPos = player.pos.clone();
+    let celebTime = 0;
+    player.isCelebrating = true;
+
+    const celebUpdate = onUpdate(() => {
+        celebTime += dt();
+        const progress = celebTime / duration;
+
+        // Kid does a happy jump dance
+        player.pos.x = startPos.x + Math.sin(progress * Math.PI * 6) * 15;
+        player.pos.y = startPos.y - Math.abs(Math.sin(progress * Math.PI * 8)) * 20;
+
+        // Extra arm animation during celebration
+        const armWave = Math.sin(progress * Math.PI * 12) * 12;
+        player.leftArm.pos = player.pos.add(vec2(-22 - armWave, -10));
+        player.rightArm.pos = player.pos.add(vec2(22 + armWave, -10));
+
+        if (celebTime >= duration) {
+            celebUpdate.cancel();
+            player.isCelebrating = false;
         }
     });
 }
@@ -1044,8 +1167,12 @@ function doBumpAnimation(monster1, monster2, onComplete) {
     });
 }
 
-// Monster runs off screen
+// Exit path types for variety
+const EXIT_PATHS = ["straight", "zigzag", "spiral", "bouncy", "loop"];
+
+// Monster runs off screen with varied paths
 function runOffScreen(monster) {
+    const exitPath = choose(EXIT_PATHS);
     const edge = choose([
         vec2(-50, monster.pos.y),
         vec2(GAME_WIDTH + 50, monster.pos.y),
@@ -1053,10 +1180,68 @@ function runOffScreen(monster) {
         vec2(monster.pos.x, GAME_HEIGHT + 50),
     ]);
 
-    const dir = edge.sub(monster.pos).unit();
+    const baseDir = edge.sub(monster.pos).unit();
+    const startPos = monster.pos.clone();
+    let runTime = 0;
+    const speed = MONSTER_CHASE_SPEED * 1.5;
+
+    // Drop confetti trail for some exit paths
+    let lastConfettiTime = 0;
 
     const runUpdate = monster.onUpdate(() => {
-        monster.pos = monster.pos.add(dir.scale(MONSTER_CHASE_SPEED * 2 * dt()));
+        runTime += dt();
+
+        let moveDir = baseDir.clone();
+        let currentSpeed = speed;
+
+        switch (exitPath) {
+            case "straight":
+                // Simple straight exit
+                break;
+
+            case "zigzag":
+                // Zigzag pattern
+                const zigzagOffset = Math.sin(runTime * 10) * 0.5;
+                moveDir = vec2(
+                    baseDir.x + baseDir.y * zigzagOffset,
+                    baseDir.y - baseDir.x * zigzagOffset
+                ).unit();
+                break;
+
+            case "spiral":
+                // Spiral outward
+                const spiralAngle = runTime * 5;
+                const spiralOffset = Math.sin(spiralAngle) * 0.4;
+                moveDir = vec2(
+                    baseDir.x + spiralOffset * Math.cos(spiralAngle),
+                    baseDir.y + spiralOffset * Math.sin(spiralAngle)
+                ).unit();
+                currentSpeed = speed * (1 + Math.sin(runTime * 8) * 0.3);
+                break;
+
+            case "bouncy":
+                // Bouncing motion while moving
+                monster.pos.y -= Math.abs(Math.sin(runTime * 12)) * 8;
+                break;
+
+            case "loop":
+                // Do a little loop before exiting
+                if (runTime < 0.5) {
+                    const loopAngle = runTime * Math.PI * 4;
+                    monster.pos.x = startPos.x + Math.cos(loopAngle) * 30;
+                    monster.pos.y = startPos.y + Math.sin(loopAngle) * 30;
+                    return; // Don't apply normal movement during loop
+                }
+                break;
+        }
+
+        monster.pos = monster.pos.add(moveDir.scale(currentSpeed * dt()));
+
+        // Occasionally drop confetti
+        if (runTime - lastConfettiTime > 0.2 && rand() < 0.3) {
+            lastConfettiTime = runTime;
+            spawnConfetti(monster.pos, 2);
+        }
 
         if (monster.pos.x < -60 || monster.pos.x > GAME_WIDTH + 60 ||
             monster.pos.y < -60 || monster.pos.y > GAME_HEIGHT + 60) {
@@ -1145,30 +1330,36 @@ scene("game", () => {
         player.pos.x = clamp(player.pos.x, 30, GAME_WIDTH - 30);
         player.pos.y = clamp(player.pos.y, 30, GAME_HEIGHT - 30);
 
-        // Animate player
-        player.animTime += dt() * 10;
+        // Animate player (skip if celebrating - celebration handles its own animation)
+        if (!player.isCelebrating) {
+            player.animTime += dt() * 10;
 
-        if (player.isMoving) {
-            // Running animation - legs alternate, arms swing
-            const legSwing = Math.sin(player.animTime) * 8;
-            const armSwing = Math.sin(player.animTime) * 6;
+            if (player.isMoving) {
+                // Running animation - legs alternate, arms swing
+                const legSwing = Math.sin(player.animTime) * 8;
+                const armSwing = Math.sin(player.animTime) * 6;
 
-            player.leftLeg.pos = player.pos.add(vec2(-8, 18 + legSwing));
-            player.rightLeg.pos = player.pos.add(vec2(8, 18 - legSwing));
-            player.leftArm.pos = player.pos.add(vec2(-22, -5 - armSwing));
-            player.rightArm.pos = player.pos.add(vec2(22, -5 + armSwing));
-            player.bobOffset = 0;
+                player.leftLeg.pos = player.pos.add(vec2(-8, 18 + legSwing));
+                player.rightLeg.pos = player.pos.add(vec2(8, 18 - legSwing));
+                player.leftArm.pos = player.pos.add(vec2(-22, -5 - armSwing));
+                player.rightArm.pos = player.pos.add(vec2(22, -5 + armSwing));
+                player.bobOffset = 0;
+            } else {
+                // Idle bobbing animation
+                player.bobOffset = Math.sin(player.animTime * 0.3) * 3;
+
+                // Gentle arm wave when idle
+                const idleWave = Math.sin(player.animTime * 0.5) * 3;
+
+                player.leftLeg.pos = player.pos.add(vec2(-8, 18));
+                player.rightLeg.pos = player.pos.add(vec2(8, 18));
+                player.leftArm.pos = player.pos.add(vec2(-22, -5 + idleWave));
+                player.rightArm.pos = player.pos.add(vec2(22, -5 - idleWave));
+            }
         } else {
-            // Idle bobbing animation
-            player.bobOffset = Math.sin(player.animTime * 0.3) * 3;
-
-            // Gentle arm wave when idle
-            const idleWave = Math.sin(player.animTime * 0.5) * 3;
-
+            // During celebration, just update leg positions to follow player
             player.leftLeg.pos = player.pos.add(vec2(-8, 18));
             player.rightLeg.pos = player.pos.add(vec2(8, 18));
-            player.leftArm.pos = player.pos.add(vec2(-22, -5 + idleWave));
-            player.rightArm.pos = player.pos.add(vec2(22, -5 - idleWave));
         }
     });
 
@@ -1350,6 +1541,31 @@ scene("game", () => {
         });
 
         monstersInZones.set(zone, monstersNearby);
+        zone.monstersInside = monstersNearby.length;
+
+        // Visual feedback based on monsters inside
+        zone.pulseTime += dt();
+
+        if (monstersNearby.length === 0) {
+            // No monsters - normal state
+            zone.color = rgb(255, 255, 100);
+            zone.opacity = 0.6;
+            zone.glowRing.opacity = 0;
+        } else if (monstersNearby.length === 1) {
+            // One monster - gentle pulse, slightly brighter
+            const pulse = Math.sin(zone.pulseTime * 4) * 0.15 + 0.75;
+            zone.color = rgb(255, 240, 150);
+            zone.opacity = pulse;
+            zone.glowRing.opacity = 0.3;
+            zone.glowRing.color = rgb(255, 255, 200);
+        } else {
+            // Two or more monsters - strong pulse, color shift to green/ready
+            const pulse = Math.sin(zone.pulseTime * 6) * 0.2 + 0.8;
+            zone.color = rgb(200, 255, 150); // Greenish - ready!
+            zone.opacity = pulse;
+            zone.glowRing.opacity = 0.5 + Math.sin(zone.pulseTime * 8) * 0.2;
+            zone.glowRing.color = rgb(150, 255, 150);
+        }
 
         // Check for two monsters in zone
         if (monstersNearby.length >= 2 && !zone.isChecking) {
@@ -1373,13 +1589,19 @@ scene("game", () => {
                     if (sum === zone.targetSum) {
                         // Success!
                         score += 10;
-                        spawnSparkles(zone.pos);
 
-                        // Happy dance then run off
-                        let dancesDone = 0;
-                        const checkDancesDone = () => {
-                            dancesDone++;
-                            if (dancesDone === 2) {
+                        // Big celebration effects!
+                        spawnSparkles(zone.pos);
+                        spawnConfetti(zone.pos, 30); // Big confetti burst
+
+                        // Kid celebrates too!
+                        doKidCelebration(player, 1.5);
+
+                        // Monsters do varied celebrations then run off
+                        let celebsDone = 0;
+                        const checkCelebsDone = () => {
+                            celebsDone++;
+                            if (celebsDone === 2) {
                                 // Change target zone number for next challenge
                                 updateZoneTarget(zone);
                                 runOffScreen(m1);
@@ -1387,8 +1609,8 @@ scene("game", () => {
                             }
                         };
 
-                        doHappyDance(m1, zone, checkDancesDone);
-                        doHappyDance(m2, zone, checkDancesDone);
+                        doCelebration(m1, zone, checkCelebsDone);
+                        doCelebration(m2, zone, checkCelebsDone);
                     } else {
                         // Failure - bump and scatter
                         doBumpAnimation(m1, m2, () => {
