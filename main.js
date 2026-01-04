@@ -72,6 +72,31 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     isTouchDevice = true;
 }
 
+// Shake detection for releasing monsters
+let lastShakeTime = 0;
+let shakeThreshold = 15; // Acceleration threshold for shake detection
+let shakeCooldown = 500; // Minimum ms between shake triggers
+
+// Function to release all following monsters (will be set in game scene)
+let releaseFollowingMonsters = null;
+
+// Mobile shake detection using DeviceMotion
+if (isTouchDevice && window.DeviceMotionEvent) {
+    window.addEventListener('devicemotion', (event) => {
+        const acc = event.accelerationIncludingGravity;
+        if (!acc) return;
+
+        const totalAcceleration = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+        const now = Date.now();
+
+        // Detect shake (acceleration above threshold, respecting cooldown)
+        if (totalAcceleration > shakeThreshold && now - lastShakeTime > shakeCooldown) {
+            lastShakeTime = now;
+            if (releaseFollowingMonsters) releaseFollowingMonsters();
+        }
+    });
+}
+
 // Game constants
 const PLAYER_SPEED = 300;
 const MONSTER_SPEED = 60;
@@ -1156,6 +1181,55 @@ scene("game", () => {
         return count;
     }
 
+    // Release and scatter all following monsters
+    function scatterFollowingMonsters() {
+        let released = false;
+        get("monster").forEach(m => {
+            if (m.isFollowing && !m.isDancing && !m.isBumping) {
+                m.isFollowing = false;
+                released = true;
+
+                // Give them a wander target away from player
+                const angle = rand(0, Math.PI * 2);
+                const distance = rand(150, 250);
+                m.wanderTarget = vec2(
+                    clamp(player.pos.x + Math.cos(angle) * distance, 50, GAME_WIDTH - 50),
+                    clamp(player.pos.y + Math.sin(angle) * distance, GAME_HEIGHT * 0.35, GAME_HEIGHT - 50)
+                );
+                m.wanderTimer = rand(2, 4);
+            }
+        });
+
+        // Visual feedback if monsters were released
+        if (released) {
+            // Spawn release particles around player
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const particle = add([
+                    circle(5),
+                    pos(player.pos),
+                    color(255, 200, 100),
+                    opacity(1),
+                    z(10),
+                    { vel: vec2(Math.cos(angle) * 150, Math.sin(angle) * 150), life: 0.5 }
+                ]);
+                particle.onUpdate(() => {
+                    particle.pos = particle.pos.add(particle.vel.scale(dt()));
+                    particle.life -= dt();
+                    particle.opacity = particle.life * 2;
+                    if (particle.life <= 0) destroy(particle);
+                });
+            }
+        }
+    }
+
+    // Set the global release function so shake detection can call it
+    releaseFollowingMonsters = scatterFollowingMonsters;
+
+    // Desktop: Press 'R' or 'Escape' to release monsters
+    onKeyPress("r", scatterFollowingMonsters);
+    onKeyPress("escape", scatterFollowingMonsters);
+
     // Player bumps into monster - make it follow
     player.onCollide("monster", (monster) => {
         if (!monster.isFollowing && !monster.isDancing && !monster.isBumping) {
@@ -1339,9 +1413,9 @@ scene("game", () => {
 
     // Instructions
     const instructionText = isTouchDevice
-        ? "Touch to guide your character. Bump into monsters to collect them!"
-        : "Move mouse to guide your character. Bump into monsters to collect them!";
-    const instructionSize = isTouchDevice ? 12 : 14;
+        ? "Touch to move. Bump monsters to collect. Shake to release!"
+        : "Mouse to move. Bump monsters to collect. Press R to release!";
+    const instructionSize = isTouchDevice ? 11 : 14;
 
     add([
         text(instructionText, { size: instructionSize }),
