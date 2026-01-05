@@ -188,6 +188,8 @@ let score = 0;
 let monstersInZones = new Map(); // zone -> [monsters]
 let usedDesigns = []; // Track which designs are currently on screen
 let targetSums = []; // Store target sums for validation
+let paradeTriggered = false; // Track if 50-point parade has happened
+let paradeInProgress = false; // Track if parade is currently happening
 
 // Draw simple grass background
 function drawBackground() {
@@ -342,6 +344,7 @@ function createMonster(number, startPos, designIndex = null) {
             inZone: null,
             isDancing: false,
             isBumping: false,
+            isParading: false,
             attachments: [], // Track attached elements for cleanup
             // Animation state
             animTime: rand(0, 10), // Randomize start time so monsters aren't synchronized
@@ -1270,11 +1273,322 @@ function runOffScreen(monster) {
     });
 }
 
+// Spawn a floating balloon
+function spawnBalloon(position) {
+    const balloonColors = [
+        [255, 100, 100], // Red
+        [100, 200, 255], // Light blue
+        [255, 255, 100], // Yellow
+        [255, 150, 200], // Pink
+        [150, 255, 150], // Light green
+        [200, 150, 255], // Purple
+    ];
+    const balloonColor = choose(balloonColors);
+
+    // Balloon body (oval)
+    const balloon = add([
+        circle(15),
+        pos(position),
+        color(...balloonColor),
+        opacity(0.9),
+        anchor("center"),
+        z(20),
+        "balloon",
+        {
+            vel: vec2(rand(-30, 30), rand(-80, -120)),
+            wobble: rand(0, Math.PI * 2),
+            wobbleSpeed: rand(3, 5),
+        }
+    ]);
+
+    // Balloon string
+    const balloonString = add([
+        rect(1, 20),
+        pos(position.x, position.y + 15),
+        color(100, 100, 100),
+        anchor("top"),
+        z(19),
+        "balloonString",
+    ]);
+
+    // Balloon highlight
+    const highlight = add([
+        circle(4),
+        pos(position.x - 5, position.y - 5),
+        color(255, 255, 255),
+        opacity(0.6),
+        z(21),
+        "balloonHighlight",
+    ]);
+
+    balloon.onUpdate(() => {
+        balloon.wobble += balloon.wobbleSpeed * dt();
+        balloon.pos.x += Math.sin(balloon.wobble) * 20 * dt();
+        balloon.pos.y += balloon.vel.y * dt();
+
+        // Update string position
+        balloonString.pos = vec2(balloon.pos.x, balloon.pos.y + 15);
+        highlight.pos = vec2(balloon.pos.x - 5, balloon.pos.y - 5);
+
+        // Fade out as it rises
+        if (balloon.pos.y < GAME_HEIGHT * 0.2) {
+            balloon.opacity -= dt() * 0.5;
+            balloonString.opacity = balloon.opacity;
+            highlight.opacity = balloon.opacity * 0.6;
+        }
+
+        // Destroy when off screen or faded
+        if (balloon.pos.y < -30 || balloon.opacity <= 0) {
+            destroy(balloonString);
+            destroy(highlight);
+            destroy(balloon);
+        }
+    });
+
+    return balloon;
+}
+
+// Spawn candy that arcs and falls
+function spawnCandy(position, direction) {
+    const candyColors = [
+        [255, 50, 50],   // Red candy
+        [50, 200, 50],   // Green candy
+        [255, 200, 50],  // Gold wrapper
+        [200, 50, 200],  // Purple candy
+        [255, 150, 50],  // Orange candy
+    ];
+    const candyColor = choose(candyColors);
+    const isRound = rand() > 0.5;
+
+    const candy = add([
+        isRound ? circle(6) : rect(12, 8, { radius: 2 }),
+        pos(position),
+        color(...candyColor),
+        rotate(rand(0, 360)),
+        anchor("center"),
+        z(18),
+        "candy",
+        {
+            vel: vec2(direction.x * rand(60, 120), direction.y * rand(60, 120) - 100),
+            rotSpeed: rand(-300, 300),
+            gravity: 250,
+            bounces: 2,
+        }
+    ]);
+
+    // Add wrapper detail for rectangular candy
+    let wrapper = null;
+    if (!isRound) {
+        wrapper = add([
+            rect(3, 10),
+            pos(position),
+            color(Math.min(255, candyColor[0] + 50), Math.min(255, candyColor[1] + 50), Math.min(255, candyColor[2] + 50)),
+            rotate(candy.angle),
+            anchor("center"),
+            z(19),
+            "candyWrapper",
+        ]);
+    }
+
+    candy.onUpdate(() => {
+        candy.vel.y += candy.gravity * dt();
+        candy.pos = candy.pos.add(candy.vel.scale(dt()));
+        candy.angle += candy.rotSpeed * dt();
+
+        // Update wrapper position and rotation
+        if (wrapper) {
+            wrapper.pos = candy.pos;
+            wrapper.angle = candy.angle;
+        }
+
+        // Bounce off ground
+        if (candy.pos.y > GAME_HEIGHT - 20 && candy.vel.y > 0) {
+            if (candy.bounces > 0) {
+                candy.vel.y = -candy.vel.y * 0.5;
+                candy.vel.x *= 0.7;
+                candy.bounces--;
+            } else {
+                candy.vel = vec2(0, 0);
+                candy.rotSpeed = 0;
+            }
+        }
+
+        // Destroy after settling
+        if (candy.bounces <= 0 && Math.abs(candy.vel.y) < 5) {
+            wait(2, () => {
+                if (candy.exists()) {
+                    if (wrapper && wrapper.exists()) destroy(wrapper);
+                    destroy(candy);
+                }
+            });
+        }
+    });
+}
+
+// The big 50-point parade celebration!
+function startParade(player) {
+    paradeInProgress = true;
+
+    // Get all monsters on screen
+    const monsters = get("monster");
+    if (monsters.length === 0) {
+        paradeInProgress = false;
+        return;
+    }
+
+    // Stop all monsters from their normal behavior
+    monsters.forEach(m => {
+        m.isFollowing = false;
+        m.inZone = null;
+        m.isParading = true;
+    });
+
+    // Clear hand references
+    if (typeof leftHandMonster !== 'undefined') leftHandMonster = null;
+    if (typeof rightHandMonster !== 'undefined') rightHandMonster = null;
+
+    // Big announcement
+    const announcement = add([
+        text("PARADE TIME!", { size: 48 }),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT / 3),
+        anchor("center"),
+        color(255, 220, 50),
+        z(100),
+        opacity(1),
+    ]);
+
+    // Flash and fade the announcement
+    let announceTime = 0;
+    const announceUpdate = onUpdate(() => {
+        announceTime += dt();
+        announcement.opacity = Math.abs(Math.sin(announceTime * 5));
+        if (announceTime > 2) {
+            destroy(announcement);
+            announceUpdate.cancel();
+        }
+    });
+
+    // Parade path: rectangle around the screen
+    const margin = 60;
+    const paradePoints = [
+        vec2(margin, GAME_HEIGHT - margin),                    // Bottom left
+        vec2(margin, margin + 50),                              // Top left
+        vec2(GAME_WIDTH - margin, margin + 50),                // Top right
+        vec2(GAME_WIDTH - margin, GAME_HEIGHT - margin),       // Bottom right
+        vec2(margin, GAME_HEIGHT - margin),                    // Back to start
+    ];
+
+    // Form parade line - monsters follow a leader path with spacing
+    const paradeSpeed = 80;
+    const spacing = 50;
+    let paradeTime = 0;
+    let currentPointIndex = 0;
+    let distanceAlongPath = 0;
+
+    // Calculate total path length
+    let totalPathLength = 0;
+    for (let i = 0; i < paradePoints.length - 1; i++) {
+        totalPathLength += paradePoints[i].dist(paradePoints[i + 1]);
+    }
+
+    // Helper to get position along parade path
+    function getParadePosition(distance) {
+        let remainingDist = distance % totalPathLength;
+        for (let i = 0; i < paradePoints.length - 1; i++) {
+            const segmentLength = paradePoints[i].dist(paradePoints[i + 1]);
+            if (remainingDist <= segmentLength) {
+                const t = remainingDist / segmentLength;
+                return paradePoints[i].lerp(paradePoints[i + 1], t);
+            }
+            remainingDist -= segmentLength;
+        }
+        return paradePoints[0];
+    }
+
+    // Balloon and candy timers
+    let lastBalloonTime = 0;
+    let lastCandyTime = 0;
+    const balloonInterval = 0.4;
+    const candyInterval = 0.25;
+
+    // Main parade update
+    const paradeUpdate = onUpdate(() => {
+        paradeTime += dt();
+        distanceAlongPath += paradeSpeed * dt();
+
+        // Position each monster along the parade path with spacing
+        monsters.forEach((monster, index) => {
+            if (!monster.exists()) return;
+
+            const monsterDist = distanceAlongPath - (index * spacing);
+            if (monsterDist > 0) {
+                const targetPos = getParadePosition(monsterDist);
+                monster.pos = monster.pos.lerp(targetPos, 0.1);
+
+                // Add a little bounce to their step
+                monster.pos.y += Math.sin(paradeTime * 8 + index) * 3;
+            }
+        });
+
+        // Release balloons periodically
+        if (paradeTime - lastBalloonTime > balloonInterval) {
+            lastBalloonTime = paradeTime;
+            const randomMonster = choose(monsters.filter(m => m.exists()));
+            if (randomMonster) {
+                spawnBalloon(randomMonster.pos.add(vec2(0, -20)));
+            }
+        }
+
+        // Throw candy periodically
+        if (paradeTime - lastCandyTime > candyInterval) {
+            lastCandyTime = paradeTime;
+            const randomMonster = choose(monsters.filter(m => m.exists()));
+            if (randomMonster) {
+                const throwDir = vec2(rand(-1, 1), rand(-0.5, 0.5)).unit();
+                spawnCandy(randomMonster.pos, throwDir);
+            }
+        }
+
+        // Kid follows behind the parade
+        if (monsters.length > 0 && monsters[monsters.length - 1].exists()) {
+            const lastMonsterPos = getParadePosition(distanceAlongPath - (monsters.length * spacing));
+            player.pos = player.pos.lerp(lastMonsterPos, 0.08);
+            player.pos.y += Math.sin(paradeTime * 8) * 3;
+        }
+
+        // End parade after one full loop
+        if (distanceAlongPath > totalPathLength + (monsters.length * spacing) + 100) {
+            paradeUpdate.cancel();
+
+            // Final celebration burst
+            for (let i = 0; i < 10; i++) {
+                wait(i * 0.1, () => {
+                    spawnBalloon(vec2(rand(50, GAME_WIDTH - 50), GAME_HEIGHT - 50));
+                    spawnConfetti(vec2(rand(50, GAME_WIDTH - 50), rand(100, 300)), 15);
+                });
+            }
+
+            // Return monsters to normal after a moment
+            wait(1.5, () => {
+                monsters.forEach(m => {
+                    if (m.exists()) {
+                        m.isParading = false;
+                        m.wanderTarget = vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.15, GAME_HEIGHT * 0.85));
+                    }
+                });
+                paradeInProgress = false;
+            });
+        }
+    });
+}
+
 // Main game scene
 scene("game", () => {
     // Reset game state
     usedDesigns = [];
     targetSums = [4, 5, 7]; // Store our target sums
+    paradeTriggered = false;
+    paradeInProgress = false;
 
     drawBackground();
 
@@ -1333,6 +1647,9 @@ scene("game", () => {
 
     // Player follows mouse or touch
     onUpdate(() => {
+        // Skip player control during parade (parade controls player movement)
+        if (paradeInProgress) return;
+
         const mpos = isTouchDevice ? currentPointerPos : mousePos();
         const dir = mpos.sub(player.pos);
 
@@ -1510,8 +1827,8 @@ scene("game", () => {
 
     // Monster behavior
     onUpdate("monster", (monster) => {
-        // Movement logic - skip if dancing or bumping
-        if (!monster.isDancing && !monster.isBumping) {
+        // Movement logic - skip if dancing, bumping, or in parade
+        if (!monster.isDancing && !monster.isBumping && !monster.isParading) {
             if (monster.isFollowing) {
                 // Position at player's side (holding hands)
                 const handOffset = monster.heldHand === "left" ? -50 : 50;
@@ -1595,10 +1912,13 @@ scene("game", () => {
 
     // Zone collision detection
     onUpdate("targetZone", (zone) => {
+        // Skip zone logic during parade
+        if (paradeInProgress) return;
+
         const monstersNearby = [];
 
         get("monster").forEach((monster) => {
-            if (monster.isDancing || monster.isBumping) return;
+            if (monster.isDancing || monster.isBumping || monster.isParading) return;
 
             const dist = monster.pos.dist(zone.pos);
             if (dist < 70) {
@@ -1659,6 +1979,9 @@ scene("game", () => {
                         // Success!
                         score += 10;
 
+                        // Check for 50-point parade!
+                        const shouldParade = score >= 50 && !paradeTriggered && !paradeInProgress;
+
                         // Clear hand references since these monsters are celebrating
                         if (leftHandMonster === m1 || leftHandMonster === m2) leftHandMonster = null;
                         if (rightHandMonster === m1 || rightHandMonster === m2) rightHandMonster = null;
@@ -1679,6 +2002,14 @@ scene("game", () => {
                                 updateZoneTarget(zone);
                                 runOffScreen(m1);
                                 runOffScreen(m2);
+
+                                // Trigger parade if we hit 50 points!
+                                if (shouldParade) {
+                                    paradeTriggered = true;
+                                    wait(2, () => {
+                                        startParade(player);
+                                    });
+                                }
                             }
                         };
 
