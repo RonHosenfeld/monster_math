@@ -188,8 +188,9 @@ let score = 0;
 let monstersInZones = new Map(); // zone -> [monsters]
 let usedDesigns = []; // Track which designs are currently on screen
 let targetSums = []; // Store target sums for validation
-let paradeTriggered = false; // Track if 50-point parade has happened
+let lastParadeMilestone = 0; // Track last score milestone that triggered parade
 let paradeInProgress = false; // Track if parade is currently happening
+let paradeCount = 0; // Track how many parades have happened for variation
 
 // Draw simple grass background
 function drawBackground() {
@@ -1425,9 +1426,97 @@ function spawnCandy(position, direction) {
     });
 }
 
+// Parade route generators
+const PARADE_ROUTES = {
+    // Classic rectangle around the screen
+    rectangle: () => {
+        const margin = 60;
+        return [
+            vec2(margin, GAME_HEIGHT - margin),
+            vec2(margin, margin + 50),
+            vec2(GAME_WIDTH - margin, margin + 50),
+            vec2(GAME_WIDTH - margin, GAME_HEIGHT - margin),
+            vec2(margin, GAME_HEIGHT - margin),
+        ];
+    },
+    // Figure-8 pattern
+    figure8: () => {
+        const points = [];
+        const centerX = GAME_WIDTH / 2;
+        const centerY = GAME_HEIGHT / 2;
+        const radiusX = GAME_WIDTH * 0.35;
+        const radiusY = GAME_HEIGHT * 0.3;
+        for (let i = 0; i <= 32; i++) {
+            const t = (i / 32) * Math.PI * 2;
+            const x = centerX + Math.sin(t) * radiusX;
+            const y = centerY + Math.sin(t * 2) * radiusY * 0.5;
+            points.push(vec2(x, y));
+        }
+        return points;
+    },
+    // Zigzag across the screen
+    zigzag: () => {
+        const margin = 60;
+        return [
+            vec2(margin, GAME_HEIGHT - margin),
+            vec2(GAME_WIDTH * 0.33, margin + 80),
+            vec2(GAME_WIDTH * 0.66, GAME_HEIGHT - margin),
+            vec2(GAME_WIDTH - margin, margin + 80),
+            vec2(GAME_WIDTH - margin, GAME_HEIGHT - margin),
+            vec2(margin, GAME_HEIGHT - margin),
+        ];
+    },
+    // Spiral inward then outward
+    spiral: () => {
+        const points = [];
+        const centerX = GAME_WIDTH / 2;
+        const centerY = GAME_HEIGHT / 2;
+        // Spiral in
+        for (let i = 0; i <= 20; i++) {
+            const t = (i / 20) * Math.PI * 3;
+            const radius = (GAME_WIDTH * 0.4) * (1 - i / 25);
+            points.push(vec2(centerX + Math.cos(t) * radius, centerY + Math.sin(t) * radius * 0.7));
+        }
+        // Spiral out
+        for (let i = 0; i <= 20; i++) {
+            const t = (i / 20) * Math.PI * 3 + Math.PI;
+            const radius = (GAME_WIDTH * 0.4) * (i / 25 + 0.2);
+            points.push(vec2(centerX + Math.cos(t) * radius, centerY + Math.sin(t) * radius * 0.7));
+        }
+        return points;
+    },
+    // Diamond shape
+    diamond: () => {
+        const centerX = GAME_WIDTH / 2;
+        const centerY = GAME_HEIGHT / 2;
+        const margin = 60;
+        return [
+            vec2(centerX, GAME_HEIGHT - margin),
+            vec2(margin, centerY),
+            vec2(centerX, margin + 50),
+            vec2(GAME_WIDTH - margin, centerY),
+            vec2(centerX, GAME_HEIGHT - margin),
+        ];
+    },
+};
+
+// Parade announcements based on milestone
+const PARADE_ANNOUNCEMENTS = [
+    { text: "PARADE TIME!", color: [255, 220, 50] },
+    { text: "SUPER STAR!", color: [255, 100, 255] },
+    { text: "AMAZING!", color: [100, 255, 100] },
+    { text: "MATH WIZARD!", color: [100, 200, 255] },
+    { text: "INCREDIBLE!", color: [255, 150, 50] },
+    { text: "UNSTOPPABLE!", color: [255, 50, 100] },
+];
+
+// Movement styles for parade
+const PARADE_STYLES = ["bounce", "sway", "hop", "wave", "wiggle"];
+
 // The big 50-point parade celebration!
 function startParade(player) {
     paradeInProgress = true;
+    paradeCount++;
 
     // Get all monsters on screen
     const monsters = get("monster");
@@ -1447,12 +1536,19 @@ function startParade(player) {
     if (typeof leftHandMonster !== 'undefined') leftHandMonster = null;
     if (typeof rightHandMonster !== 'undefined') rightHandMonster = null;
 
+    // Pick variation based on parade count
+    const routeNames = Object.keys(PARADE_ROUTES);
+    const routeName = routeNames[(paradeCount - 1) % routeNames.length];
+    const paradePoints = PARADE_ROUTES[routeName]();
+    const announcementData = PARADE_ANNOUNCEMENTS[(paradeCount - 1) % PARADE_ANNOUNCEMENTS.length];
+    const moveStyle = PARADE_STYLES[(paradeCount - 1) % PARADE_STYLES.length];
+
     // Big announcement
     const announcement = add([
-        text("PARADE TIME!", { size: 48 }),
+        text(announcementData.text, { size: 48 }),
         pos(GAME_WIDTH / 2, GAME_HEIGHT / 3),
         anchor("center"),
-        color(255, 220, 50),
+        color(...announcementData.color),
         z(100),
         opacity(1),
     ]);
@@ -1462,27 +1558,19 @@ function startParade(player) {
     const announceUpdate = onUpdate(() => {
         announceTime += dt();
         announcement.opacity = Math.abs(Math.sin(announceTime * 5));
+        // Scale pulse for extra flair
+        const scalePulse = 1 + Math.sin(announceTime * 8) * 0.1;
+        announcement.scale = vec2(scalePulse, scalePulse);
         if (announceTime > 2) {
             destroy(announcement);
             announceUpdate.cancel();
         }
     });
 
-    // Parade path: rectangle around the screen
-    const margin = 60;
-    const paradePoints = [
-        vec2(margin, GAME_HEIGHT - margin),                    // Bottom left
-        vec2(margin, margin + 50),                              // Top left
-        vec2(GAME_WIDTH - margin, margin + 50),                // Top right
-        vec2(GAME_WIDTH - margin, GAME_HEIGHT - margin),       // Bottom right
-        vec2(margin, GAME_HEIGHT - margin),                    // Back to start
-    ];
-
     // Form parade line - monsters follow a leader path with spacing
-    const paradeSpeed = 80;
+    const paradeSpeed = 90 + paradeCount * 5; // Gets slightly faster each time
     const spacing = 50;
     let paradeTime = 0;
-    let currentPointIndex = 0;
     let distanceAlongPath = 0;
 
     // Calculate total path length
@@ -1494,6 +1582,7 @@ function startParade(player) {
     // Helper to get position along parade path
     function getParadePosition(distance) {
         let remainingDist = distance % totalPathLength;
+        if (remainingDist < 0) remainingDist += totalPathLength;
         for (let i = 0; i < paradePoints.length - 1; i++) {
             const segmentLength = paradePoints[i].dist(paradePoints[i + 1]);
             if (remainingDist <= segmentLength) {
@@ -1505,11 +1594,30 @@ function startParade(player) {
         return paradePoints[0];
     }
 
-    // Balloon and candy timers
+    // Movement style function
+    function getStyleOffset(time, index) {
+        switch (moveStyle) {
+            case "bounce":
+                return vec2(0, Math.sin(time * 8 + index) * 5);
+            case "sway":
+                return vec2(Math.sin(time * 6 + index) * 8, Math.abs(Math.sin(time * 3 + index)) * 3);
+            case "hop":
+                const hopPhase = (time * 4 + index * 0.5) % 1;
+                return vec2(0, hopPhase < 0.3 ? -Math.sin(hopPhase / 0.3 * Math.PI) * 12 : 0);
+            case "wave":
+                return vec2(Math.sin(time * 5 + index * 0.8) * 6, Math.cos(time * 5 + index * 0.8) * 4);
+            case "wiggle":
+                return vec2(Math.sin(time * 12 + index) * 4, Math.sin(time * 8 + index * 2) * 3);
+            default:
+                return vec2(0, 0);
+        }
+    }
+
+    // Balloon and candy timers - vary the frequency
     let lastBalloonTime = 0;
     let lastCandyTime = 0;
-    const balloonInterval = 0.4;
-    const candyInterval = 0.25;
+    const balloonInterval = Math.max(0.2, 0.5 - paradeCount * 0.05); // More balloons over time
+    const candyInterval = Math.max(0.15, 0.3 - paradeCount * 0.03); // More candy over time
 
     // Main parade update
     const paradeUpdate = onUpdate(() => {
@@ -1523,10 +1631,8 @@ function startParade(player) {
             const monsterDist = distanceAlongPath - (index * spacing);
             if (monsterDist > 0) {
                 const targetPos = getParadePosition(monsterDist);
-                monster.pos = monster.pos.lerp(targetPos, 0.1);
-
-                // Add a little bounce to their step
-                monster.pos.y += Math.sin(paradeTime * 8 + index) * 3;
+                const styleOffset = getStyleOffset(paradeTime, index);
+                monster.pos = monster.pos.lerp(targetPos.add(styleOffset), 0.12);
             }
         });
 
@@ -1552,19 +1658,20 @@ function startParade(player) {
         // Kid follows behind the parade
         if (monsters.length > 0 && monsters[monsters.length - 1].exists()) {
             const lastMonsterPos = getParadePosition(distanceAlongPath - (monsters.length * spacing));
-            player.pos = player.pos.lerp(lastMonsterPos, 0.08);
-            player.pos.y += Math.sin(paradeTime * 8) * 3;
+            const kidStyleOffset = getStyleOffset(paradeTime, monsters.length);
+            player.pos = player.pos.lerp(lastMonsterPos.add(kidStyleOffset), 0.1);
         }
 
         // End parade after one full loop
         if (distanceAlongPath > totalPathLength + (monsters.length * spacing) + 100) {
             paradeUpdate.cancel();
 
-            // Final celebration burst
-            for (let i = 0; i < 10; i++) {
-                wait(i * 0.1, () => {
+            // Final celebration burst - bigger each time!
+            const burstCount = 8 + paradeCount * 2;
+            for (let i = 0; i < burstCount; i++) {
+                wait(i * 0.08, () => {
                     spawnBalloon(vec2(rand(50, GAME_WIDTH - 50), GAME_HEIGHT - 50));
-                    spawnConfetti(vec2(rand(50, GAME_WIDTH - 50), rand(100, 300)), 15);
+                    spawnConfetti(vec2(rand(50, GAME_WIDTH - 50), rand(100, 300)), 12 + paradeCount);
                 });
             }
 
@@ -1587,8 +1694,9 @@ scene("game", () => {
     // Reset game state
     usedDesigns = [];
     targetSums = [4, 5, 7]; // Store our target sums
-    paradeTriggered = false;
+    lastParadeMilestone = 0;
     paradeInProgress = false;
+    paradeCount = 0;
 
     drawBackground();
 
@@ -1979,8 +2087,9 @@ scene("game", () => {
                         // Success!
                         score += 10;
 
-                        // Check for 50-point parade!
-                        const shouldParade = score >= 50 && !paradeTriggered && !paradeInProgress;
+                        // Check for 50-point parade! (every 50 points: 50, 100, 150, etc.)
+                        const currentMilestone = Math.floor(score / 50) * 50;
+                        const shouldParade = currentMilestone > lastParadeMilestone && !paradeInProgress;
 
                         // Clear hand references since these monsters are celebrating
                         if (leftHandMonster === m1 || leftHandMonster === m2) leftHandMonster = null;
@@ -2003,9 +2112,9 @@ scene("game", () => {
                                 runOffScreen(m1);
                                 runOffScreen(m2);
 
-                                // Trigger parade if we hit 50 points!
+                                // Trigger parade if we hit a 50-point milestone!
                                 if (shouldParade) {
-                                    paradeTriggered = true;
+                                    lastParadeMilestone = currentMilestone;
                                     wait(2, () => {
                                         startParade(player);
                                     });
