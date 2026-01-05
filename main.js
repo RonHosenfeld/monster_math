@@ -1,16 +1,27 @@
 import kaboom from "https://unpkg.com/kaboom@3000.1.17/dist/kaboom.mjs";
 
-// Device detection
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-    || (window.innerWidth <= 768);
+// Device detection - more robust detection
+const userAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const touchCapable = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const smallScreen = window.innerWidth <= 768 || window.innerHeight <= 768;
+const isMobile = userAgentMobile || (touchCapable && smallScreen);
 const isPortrait = window.innerHeight > window.innerWidth;
 
-// Game dimensions based on device
-// Desktop: 800x600 (landscape)
-// Mobile portrait: 500x750 (taller for phones)
-// Mobile landscape: 800x600
-const GAME_WIDTH = (isMobile && isPortrait) ? 500 : 800;
-const GAME_HEIGHT = (isMobile && isPortrait) ? 750 : 600;
+// Game dimensions based on device and orientation
+// Mobile portrait: Use full portrait dimensions to fill phone screen
+// Desktop/Mobile landscape: Standard landscape dimensions
+let GAME_WIDTH, GAME_HEIGHT;
+
+if (isMobile && isPortrait) {
+    // Portrait phone - use dimensions that fill the screen better
+    // Match typical phone aspect ratio (roughly 9:19 or similar)
+    GAME_WIDTH = 400;
+    GAME_HEIGHT = 700;
+} else {
+    // Desktop or landscape mobile
+    GAME_WIDTH = 800;
+    GAME_HEIGHT = 600;
+}
 
 // Calculate responsive canvas size
 function getGameDimensions() {
@@ -35,17 +46,17 @@ function getGameDimensions() {
 
     // Device-specific scale adjustments
     if (isMobile) {
-        // Mobile: fill more of the screen (95%)
-        scale = scale * 0.95;
+        // Mobile: fill almost all of the screen (98%)
+        scale = scale * 0.98;
     } else {
-        // Desktop: leave 15% border (85% of available space)
-        scale = scale * 0.85;
+        // Desktop: small border (90% of available space)
+        scale = scale * 0.90;
     }
 
     return {
         width: baseWidth,
         height: baseHeight,
-        scale: Math.max(0.5, Math.min(scale, 2))
+        scale: Math.max(0.5, Math.min(scale, 2.5))
     };
 }
 
@@ -180,19 +191,19 @@ let targetSums = []; // Store target sums for validation
 
 // Draw simple grass background
 function drawBackground() {
-    // Grass (covers bottom 2/3 of screen)
+    // Grass (covers 90% of screen - small sky strip at top)
     add([
-        rect(GAME_WIDTH, GAME_HEIGHT * 0.67),
-        pos(0, GAME_HEIGHT * 0.33),
+        rect(GAME_WIDTH, GAME_HEIGHT * 0.90),
+        pos(0, GAME_HEIGHT * 0.10),
         color(120, 200, 80),
         z(-10),
     ]);
 
-    // Some decorative elements
-    for (let i = 0; i < 10; i++) {
+    // Some decorative elements (darker grass patches)
+    for (let i = 0; i < 12; i++) {
         add([
             circle(rand(5, 15)),
-            pos(rand(50, GAME_WIDTH - 50), rand(GAME_HEIGHT * 0.4, GAME_HEIGHT - 50)),
+            pos(rand(50, GAME_WIDTH - 50), rand(GAME_HEIGHT * 0.15, GAME_HEIGHT - 50)),
             color(100, 180, 60),
             z(-5),
         ]);
@@ -316,7 +327,7 @@ function createMonster(number, startPos, designIndex = null) {
 
     const monster = add([
         bodyComponent,
-        pos(startPos || vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.4, GAME_HEIGHT * 0.85))),
+        pos(startPos || vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.15, GAME_HEIGHT * 0.85))),
         color(...design.bodyColor),
         area({ width: 50, height: 50, offset: vec2(-25, -25) }),
         anchor("center"),
@@ -327,6 +338,7 @@ function createMonster(number, startPos, designIndex = null) {
             wanderTarget: null,
             wanderTimer: 0,
             isFollowing: false,
+            heldHand: null, // "left" or "right" when held by player
             inZone: null,
             isDancing: false,
             isBumping: false,
@@ -1269,10 +1281,19 @@ scene("game", () => {
     // Create player
     const player = createPlayer();
 
-    // Create target zones (positioned relative to screen size)
-    createTargetZone(5, vec2(GAME_WIDTH * 0.12, GAME_HEIGHT * 0.2));
-    createTargetZone(7, vec2(GAME_WIDTH * 0.88, GAME_HEIGHT * 0.2));
-    createTargetZone(4, vec2(GAME_WIDTH / 2, GAME_HEIGHT * 0.88));
+    // Create target zones (all on the grassy area - grass starts at 0.10)
+    // Layout differs for portrait vs landscape to use space better
+    if (isMobile && isPortrait) {
+        // Portrait mode: spread zones vertically
+        createTargetZone(5, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.25));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.75, GAME_HEIGHT * 0.50));
+        createTargetZone(4, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.75));
+    } else {
+        // Landscape mode: zones spread horizontally
+        createTargetZone(5, vec2(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.50));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.85, GAME_HEIGHT * 0.50));
+        createTargetZone(4, vec2(GAME_WIDTH / 2, GAME_HEIGHT * 0.80));
+    }
 
     // Create initial monsters with guaranteed valid pairs
     // First, create a pair that adds up to one of the targets
@@ -1363,33 +1384,48 @@ scene("game", () => {
         }
     });
 
+    // Track which monsters are held in each hand
+    let leftHandMonster = null;
+    let rightHandMonster = null;
+
     // Count how many monsters are currently following
     function countFollowing() {
-        let count = 0;
-        get("monster").forEach(m => {
-            if (m.isFollowing && !m.isDancing && !m.isBumping) count++;
-        });
-        return count;
+        return (leftHandMonster ? 1 : 0) + (rightHandMonster ? 1 : 0);
     }
 
     // Release and scatter all following monsters
     function scatterFollowingMonsters() {
         let released = false;
-        get("monster").forEach(m => {
-            if (m.isFollowing && !m.isDancing && !m.isBumping) {
-                m.isFollowing = false;
-                released = true;
 
-                // Give them a wander target away from player
-                const angle = rand(0, Math.PI * 2);
-                const distance = rand(150, 250);
-                m.wanderTarget = vec2(
-                    clamp(player.pos.x + Math.cos(angle) * distance, 50, GAME_WIDTH - 50),
-                    clamp(player.pos.y + Math.sin(angle) * distance, GAME_HEIGHT * 0.35, GAME_HEIGHT - 50)
-                );
-                m.wanderTimer = rand(2, 4);
-            }
-        });
+        // Release left hand monster
+        if (leftHandMonster && !leftHandMonster.isDancing && !leftHandMonster.isBumping) {
+            leftHandMonster.isFollowing = false;
+            leftHandMonster.heldHand = null;
+            const angle = rand(Math.PI * 0.5, Math.PI * 1.5); // Scatter to the left
+            const distance = rand(150, 250);
+            leftHandMonster.wanderTarget = vec2(
+                clamp(player.pos.x + Math.cos(angle) * distance, 50, GAME_WIDTH - 50),
+                clamp(player.pos.y + Math.sin(angle) * distance, GAME_HEIGHT * 0.35, GAME_HEIGHT - 50)
+            );
+            leftHandMonster.wanderTimer = rand(2, 4);
+            leftHandMonster = null;
+            released = true;
+        }
+
+        // Release right hand monster
+        if (rightHandMonster && !rightHandMonster.isDancing && !rightHandMonster.isBumping) {
+            rightHandMonster.isFollowing = false;
+            rightHandMonster.heldHand = null;
+            const angle = rand(-Math.PI * 0.5, Math.PI * 0.5); // Scatter to the right
+            const distance = rand(150, 250);
+            rightHandMonster.wanderTarget = vec2(
+                clamp(player.pos.x + Math.cos(angle) * distance, 50, GAME_WIDTH - 50),
+                clamp(player.pos.y + Math.sin(angle) * distance, GAME_HEIGHT * 0.35, GAME_HEIGHT - 50)
+            );
+            rightHandMonster.wanderTimer = rand(2, 4);
+            rightHandMonster = null;
+            released = true;
+        }
 
         // Visual feedback if monsters were released
         if (released) {
@@ -1421,28 +1457,55 @@ scene("game", () => {
     onKeyPress("r", scatterFollowingMonsters);
     onKeyPress("escape", scatterFollowingMonsters);
 
-    // Player bumps into monster - make it follow
+    // Player bumps into monster - make it follow (hold hands)
     player.onCollide("monster", (monster) => {
         if (!monster.isFollowing && !monster.isDancing && !monster.isBumping) {
-            if (countFollowing() < MAX_FOLLOWING) {
+            // Assign to an empty hand
+            if (!leftHandMonster) {
                 monster.isFollowing = true;
+                monster.heldHand = "left";
+                leftHandMonster = monster;
+            } else if (!rightHandMonster) {
+                monster.isFollowing = true;
+                monster.heldHand = "right";
+                rightHandMonster = monster;
             }
         }
     });
 
-    // Visual indicator for following monsters
+    // Visual indicator for holding hands
     onDraw(() => {
-        get("monster").forEach((monster) => {
-            if (monster.isFollowing && !monster.isDancing && !monster.isBumping) {
-                // Draw a glowing ring around following monsters
-                drawCircle({
-                    pos: monster.pos,
-                    radius: 35,
-                    outline: { color: rgb(255, 255, 255), width: 3 },
-                    fill: false,
-                });
-            }
-        });
+        // Draw hand-holding lines
+        if (leftHandMonster && leftHandMonster.isFollowing && !leftHandMonster.isDancing) {
+            const handPos = player.pos.add(vec2(-25, 5));
+            drawLine({
+                p1: handPos,
+                p2: leftHandMonster.pos,
+                width: 3,
+                color: rgb(255, 220, 180), // Skin tone
+            });
+            // Draw a little hand circle
+            drawCircle({
+                pos: handPos,
+                radius: 4,
+                color: rgb(255, 220, 180),
+            });
+        }
+        if (rightHandMonster && rightHandMonster.isFollowing && !rightHandMonster.isDancing) {
+            const handPos = player.pos.add(vec2(25, 5));
+            drawLine({
+                p1: handPos,
+                p2: rightHandMonster.pos,
+                width: 3,
+                color: rgb(255, 220, 180), // Skin tone
+            });
+            // Draw a little hand circle
+            drawCircle({
+                pos: handPos,
+                radius: 4,
+                color: rgb(255, 220, 180),
+            });
+        }
     });
 
     // Monster behavior
@@ -1450,10 +1513,16 @@ scene("game", () => {
         // Movement logic - skip if dancing or bumping
         if (!monster.isDancing && !monster.isBumping) {
             if (monster.isFollowing) {
-                // Follow the player
-                const dir = player.pos.sub(monster.pos);
-                if (dir.len() > 40) { // Keep some distance from player
-                    monster.pos = monster.pos.add(dir.unit().scale(MONSTER_CHASE_SPEED * dt()));
+                // Position at player's side (holding hands)
+                const handOffset = monster.heldHand === "left" ? -50 : 50;
+                const targetPos = player.pos.add(vec2(handOffset, 10));
+
+                // Smoothly move to hand position
+                const dir = targetPos.sub(monster.pos);
+                if (dir.len() > 5) {
+                    monster.pos = monster.pos.add(dir.unit().scale(MONSTER_CHASE_SPEED * 1.5 * dt()));
+                } else {
+                    monster.pos = targetPos;
                 }
             } else {
                 // Wander randomly - spread out across the play area
@@ -1590,6 +1659,10 @@ scene("game", () => {
                         // Success!
                         score += 10;
 
+                        // Clear hand references since these monsters are celebrating
+                        if (leftHandMonster === m1 || leftHandMonster === m2) leftHandMonster = null;
+                        if (rightHandMonster === m1 || rightHandMonster === m2) rightHandMonster = null;
+
                         // Big celebration effects!
                         spawnSparkles(zone.pos);
                         spawnConfetti(zone.pos, 30); // Big confetti burst
@@ -1613,6 +1686,10 @@ scene("game", () => {
                         doCelebration(m2, zone, checkCelebsDone);
                     } else {
                         // Failure - bump and scatter
+                        // Clear hand references
+                        if (leftHandMonster === m1 || leftHandMonster === m2) leftHandMonster = null;
+                        if (rightHandMonster === m1 || rightHandMonster === m2) rightHandMonster = null;
+
                         doBumpAnimation(m1, m2, () => {
                             // Give them new wander targets away from zone
                             m1.wanderTarget = vec2(rand(GAME_WIDTH * 0.15, GAME_WIDTH * 0.85), rand(GAME_HEIGHT * 0.5, GAME_HEIGHT * 0.85));
