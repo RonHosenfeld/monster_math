@@ -1706,10 +1706,10 @@ scene("game", () => {
     // Layout differs for portrait vs landscape to use space better
     // Phones (portrait mobile) get only 2 zones to reduce crowding
     if (isMobile && isPortrait) {
-        // Portrait phone mode: only 2 zones positioned top and bottom center
+        // Portrait phone mode: 2 zones far apart like soccer goals for easier navigation
         targetSums = [5, 7];
-        createTargetZone(5, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.30));
-        createTargetZone(7, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.70));
+        createTargetZone(5, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.20));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.85));
     } else {
         // Tablet/Desktop: 3 zones for more variety
         targetSums = [4, 5, 7];
