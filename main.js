@@ -1693,7 +1693,6 @@ function startParade(player) {
 scene("game", () => {
     // Reset game state
     usedDesigns = [];
-    targetSums = [4, 5, 7]; // Store our target sums
     lastParadeMilestone = 0;
     paradeInProgress = false;
     paradeCount = 0;
@@ -1705,12 +1704,15 @@ scene("game", () => {
 
     // Create target zones (all on the grassy area - grass starts at 0.10)
     // Layout differs for portrait vs landscape to use space better
+    // Phones (portrait mobile) get only 2 zones to reduce crowding
     if (isMobile && isPortrait) {
-        // Portrait mode: spread zones vertically
-        createTargetZone(5, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.25));
-        createTargetZone(7, vec2(GAME_WIDTH * 0.75, GAME_HEIGHT * 0.50));
-        createTargetZone(4, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.75));
+        // Portrait phone mode: only 2 zones positioned top and bottom center
+        targetSums = [5, 7];
+        createTargetZone(5, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.30));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.70));
     } else {
+        // Tablet/Desktop: 3 zones for more variety
+        targetSums = [4, 5, 7];
         // Landscape mode: zones spread horizontally
         createTargetZone(5, vec2(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.50));
         createTargetZone(7, vec2(GAME_WIDTH * 0.85, GAME_HEIGHT * 0.50));
@@ -1726,7 +1728,9 @@ scene("game", () => {
     createMonster(secondNum);
 
     // Then add more monsters using smart spawning
-    for (let i = 0; i < 3; i++) {
+    // Fewer monsters on phones to avoid crowding
+    const additionalMonsters = (isMobile && isPortrait) ? 2 : 3;
+    for (let i = 0; i < additionalMonsters; i++) {
         spawnMonsterSmart();
     }
 
