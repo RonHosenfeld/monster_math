@@ -56,10 +56,16 @@ window.addEventListener('resize', () => {
 // Touch/Mouse position tracker for mobile
 let currentPointerPos = vec2(400, 300);
 let isTouchDevice = false;
+let isPhone = false;
 
-// Detect touch device
+// Detect touch device and phone
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     isTouchDevice = true;
+}
+
+// Detect phone based on screen size (phones typically < 768px width)
+if (window.innerWidth < 768) {
+    isPhone = true;
 }
 
 // Game constants
@@ -1042,17 +1048,25 @@ function runOffScreen(monster) {
 scene("game", () => {
     // Reset game state
     usedDesigns = [];
-    targetSums = [4, 5, 7]; // Store our target sums
 
     drawBackground();
 
     // Create player
     const player = createPlayer();
 
-    // Create target zones
-    createTargetZone(5, vec2(100, 150));
-    createTargetZone(7, vec2(700, 150));
-    createTargetZone(4, vec2(400, 550));
+    // Create target zones based on device type
+    if (isPhone) {
+        // Phone: 2 zones at top and bottom center
+        targetSums = [5, 7];
+        createTargetZone(5, vec2(400, 120));
+        createTargetZone(7, vec2(400, 480));
+    } else {
+        // Tablet/Desktop: 3 zones
+        targetSums = [4, 5, 7];
+        createTargetZone(5, vec2(100, 150));
+        createTargetZone(7, vec2(700, 150));
+        createTargetZone(4, vec2(400, 550));
+    }
 
     // Create initial monsters with guaranteed valid pairs
     // First, create a pair that adds up to one of the targets
@@ -1063,7 +1077,9 @@ scene("game", () => {
     createMonster(secondNum);
 
     // Then add more monsters using smart spawning
-    for (let i = 0; i < 3; i++) {
+    // Fewer monsters on phones to avoid crowding
+    const additionalMonsters = isPhone ? 2 : 3;
+    for (let i = 0; i < additionalMonsters; i++) {
         spawnMonsterSmart();
     }
 
