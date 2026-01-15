@@ -2390,7 +2390,8 @@ scene("catchGame", () => {
     });
 
     // Create a falling monster for catch mode
-    function createFallingMonster(number, xPos) {
+    // difficultyProgress: 0 = easiest (start), 1 = hardest (after ramp time)
+    function createFallingMonster(number, xPos, difficultyProgress = 0) {
         const designIndex = getAvailableDesign();
         usedDesigns.push(designIndex);
         const design = MONSTER_DESIGNS[designIndex];
@@ -2403,6 +2404,12 @@ scene("catchGame", () => {
             bodyComponent = rect(bodySize * 2, bodySize * 2, { radius: 8 });
         }
 
+        // Fall speed starts very slow and gently increases
+        // Initial: 60-80, Max: 100-130 (still gentle for kids)
+        const minFallSpeed = 60 + difficultyProgress * 40;
+        const maxFallSpeed = 80 + difficultyProgress * 50;
+        const fallSpeed = rand(minFallSpeed, maxFallSpeed);
+
         const monster = add([
             bodyComponent,
             pos(xPos, -50),
@@ -2413,9 +2420,9 @@ scene("catchGame", () => {
             {
                 number: number,
                 designIndex: designIndex,
-                fallSpeed: rand(120, 180),
-                swaySpeed: rand(2, 4),
-                swayAmount: rand(20, 40),
+                fallSpeed: fallSpeed,
+                swaySpeed: rand(1.5, 3), // Gentler sway
+                swayAmount: rand(15, 30), // Less extreme sway
                 startX: xPos,
                 fallTime: 0,
                 isCaught: false,
@@ -2698,17 +2705,25 @@ scene("catchGame", () => {
         wait(1.5, onComplete);
     }
 
-    // Spawn monsters periodically
+    // Spawn monsters periodically - kid-friendly pacing
     let spawnTimer = 0;
-    const baseSpawnRate = isMobile ? 1.8 : 1.5; // Seconds between spawns
+    let gameTime = 0; // Track total game time for gradual difficulty increase
+
+    // Start very slow and gentle for small children
+    const initialSpawnRate = isMobile ? 3.5 : 3.0; // Seconds between spawns at start
+    const minSpawnRate = isMobile ? 2.0 : 1.8; // Never faster than this (kid-friendly)
+    const difficultyRampTime = 120; // Seconds to reach max difficulty (2 minutes)
 
     onUpdate(() => {
         if (!gameActive) return;
 
+        gameTime += dt();
         spawnTimer += dt();
 
-        // Adjust spawn rate based on score (gets faster)
-        const spawnRate = Math.max(0.8, baseSpawnRate - score * 0.01);
+        // Very gradual difficulty increase over time
+        // Lerp from initial to min spawn rate over difficultyRampTime seconds
+        const difficultyProgress = Math.min(1, gameTime / difficultyRampTime);
+        const spawnRate = initialSpawnRate - (initialSpawnRate - minSpawnRate) * difficultyProgress;
 
         if (spawnTimer >= spawnRate) {
             spawnTimer = 0;
@@ -2717,11 +2732,11 @@ scene("catchGame", () => {
             const remaining = targetSum - currentSum;
             let newNumber;
 
-            if (remaining > 0 && remaining <= 5 && rand() < 0.5) {
-                // 50% chance to spawn a number that completes the target
+            if (remaining > 0 && remaining <= 5 && rand() < 0.6) {
+                // 60% chance to spawn a number that completes the target (helpful for kids)
                 newNumber = remaining;
-            } else if (rand() < 0.3 && remaining > 1) {
-                // 30% chance to spawn part of what's needed
+            } else if (rand() < 0.4 && remaining > 1) {
+                // 40% chance to spawn part of what's needed
                 newNumber = randi(1, Math.min(5, remaining));
             } else {
                 // Random number 1-5
@@ -2730,14 +2745,14 @@ scene("catchGame", () => {
 
             // Spawn at random x position, avoiding edges
             const xPos = rand(80, GAME_WIDTH - 80);
-            createFallingMonster(newNumber, xPos);
+            createFallingMonster(newNumber, xPos, difficultyProgress);
         }
     });
 
-    // Spawn initial monster
-    wait(0.5, () => {
+    // Spawn initial monster after a nice pause to let kids get ready
+    wait(1.5, () => {
         const startNum = randi(1, Math.min(4, targetSum));
-        createFallingMonster(startNum, GAME_WIDTH / 2);
+        createFallingMonster(startNum, GAME_WIDTH / 2, 0);
     });
 
     // Instructions
