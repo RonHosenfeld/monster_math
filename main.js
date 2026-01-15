@@ -2169,7 +2169,613 @@ scene("game", () => {
     ]);
 });
 
-// Title screen
+// Catch Mode - Falling monsters game
+scene("catchGame", () => {
+    // Reset game state
+    usedDesigns = [];
+    score = 0;
+
+    // Catch mode specific state
+    let targetSum = randi(5, 11); // Random target between 5-10
+    let caughtMonsters = []; // Monsters currently caught
+    let currentSum = 0;
+    let gameActive = true;
+    let comboCount = 0;
+
+    // Draw background for catch mode (sky gradient effect)
+    add([
+        rect(GAME_WIDTH, GAME_HEIGHT),
+        pos(0, 0),
+        color(135, 206, 235),
+        z(-20),
+    ]);
+
+    // Ground at bottom
+    const groundY = GAME_HEIGHT - 60;
+    add([
+        rect(GAME_WIDTH, 80),
+        pos(0, groundY),
+        color(120, 200, 80),
+        z(-10),
+    ]);
+
+    // Decorative grass patches
+    for (let i = 0; i < 10; i++) {
+        add([
+            circle(rand(8, 15)),
+            pos(rand(30, GAME_WIDTH - 30), groundY + rand(10, 50)),
+            color(100, 180, 60),
+            z(-5),
+        ]);
+    }
+
+    // Create the catcher (basket/platform at bottom)
+    const catcherWidth = isMobile ? 100 : 120;
+    const catcherHeight = 25;
+    const catcher = add([
+        rect(catcherWidth, catcherHeight, { radius: 8 }),
+        pos(GAME_WIDTH / 2, groundY - 20),
+        color(139, 90, 43), // Brown basket
+        anchor("center"),
+        area({ width: catcherWidth + 20, height: catcherHeight + 30, offset: vec2(-(catcherWidth + 20)/2, -(catcherHeight + 30)/2 - 15) }),
+        "catcher",
+    ]);
+
+    // Basket rim
+    add([
+        rect(catcherWidth + 10, 8, { radius: 4 }),
+        pos(0, 0),
+        color(101, 67, 33),
+        anchor("center"),
+        z(1),
+        follow(catcher, vec2(0, -catcherHeight/2 - 2)),
+    ]);
+
+    // Basket weave pattern
+    for (let i = 0; i < 5; i++) {
+        add([
+            rect(2, catcherHeight - 6),
+            pos(0, 0),
+            color(101, 67, 33),
+            anchor("center"),
+            z(1),
+            follow(catcher, vec2(-catcherWidth/2 + 15 + i * 22, 0)),
+        ]);
+    }
+
+    // Target display - star with circle
+    const targetDisplayY = isMobile ? 60 : 70;
+
+    // Glow ring for target (for flashing)
+    const targetGlow = add([
+        circle(55),
+        pos(GAME_WIDTH / 2, targetDisplayY),
+        color(255, 255, 100),
+        opacity(0),
+        anchor("center"),
+        z(98),
+    ]);
+
+    // Star background
+    const starPoints = [];
+    for (let i = 0; i < 5; i++) {
+        const outerAngle = (i * 72 - 90) * Math.PI / 180;
+        const innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180;
+        starPoints.push(vec2(Math.cos(outerAngle) * 50, Math.sin(outerAngle) * 50));
+        starPoints.push(vec2(Math.cos(innerAngle) * 25, Math.sin(innerAngle) * 25));
+    }
+
+    const targetStar = add([
+        polygon(starPoints),
+        pos(GAME_WIDTH / 2, targetDisplayY),
+        color(255, 220, 50),
+        anchor("center"),
+        z(99),
+    ]);
+
+    // Circle in center of star
+    add([
+        circle(30),
+        pos(GAME_WIDTH / 2, targetDisplayY),
+        color(255, 255, 200),
+        anchor("center"),
+        z(100),
+    ]);
+
+    // Target number
+    const targetText = add([
+        text(String(targetSum), { size: 36 }),
+        pos(GAME_WIDTH / 2, targetDisplayY),
+        color(100, 50, 0),
+        anchor("center"),
+        z(101),
+    ]);
+
+    // "Target:" label
+    add([
+        text("Target:", { size: isMobile ? 14 : 18 }),
+        pos(GAME_WIDTH / 2, targetDisplayY - 50),
+        color(80, 80, 80),
+        anchor("center"),
+        z(101),
+    ]);
+
+    // Current sum display
+    const sumDisplayY = targetDisplayY + 70;
+    const sumBg = add([
+        rect(isMobile ? 80 : 100, 35, { radius: 8 }),
+        pos(GAME_WIDTH / 2, sumDisplayY),
+        color(255, 255, 255),
+        opacity(0.8),
+        anchor("center"),
+        z(99),
+    ]);
+
+    const sumText = add([
+        text("Sum: 0", { size: isMobile ? 18 : 22 }),
+        pos(GAME_WIDTH / 2, sumDisplayY),
+        color(50, 50, 50),
+        anchor("center"),
+        z(100),
+    ]);
+
+    // Score display
+    add([
+        text("Score: 0", { size: isMobile ? 18 : 24 }),
+        pos(20, 20),
+        color(255, 255, 255),
+        z(100),
+        { update() { this.text = `Score: ${score}`; } }
+    ]);
+
+    // Flash target function
+    let flashTimer = 0;
+    let flashColor = null;
+    let flashDuration = 0;
+
+    function flashTarget(success) {
+        flashColor = success ? rgb(100, 255, 100) : rgb(255, 100, 100);
+        flashDuration = 0.8;
+        flashTimer = 0;
+    }
+
+    // Update flash effect
+    onUpdate(() => {
+        if (flashDuration > 0) {
+            flashTimer += dt();
+            const flashIntensity = Math.sin(flashTimer * 15) * 0.5 + 0.5;
+            targetGlow.opacity = flashIntensity * 0.7;
+            targetGlow.color = flashColor;
+            targetStar.color = flashColor;
+
+            flashDuration -= dt();
+            if (flashDuration <= 0) {
+                targetGlow.opacity = 0;
+                targetStar.color = rgb(255, 220, 50);
+            }
+        }
+    });
+
+    // Touch/Mouse tracking for catcher movement
+    if (isTouchDevice) {
+        const canvas = k.canvas;
+
+        const updateTouchPos = (e) => {
+            e.preventDefault();
+            const touch = e.touches[0] || e.changedTouches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = GAME_WIDTH / rect.width;
+            currentPointerPos = vec2(
+                (touch.clientX - rect.left) * scaleX,
+                groundY - 20
+            );
+        };
+
+        canvas.addEventListener('touchstart', updateTouchPos, { passive: false });
+        canvas.addEventListener('touchmove', updateTouchPos, { passive: false });
+    }
+
+    // Catcher follows mouse/touch horizontally
+    catcher.onUpdate(() => {
+        const targetX = isTouchDevice ? currentPointerPos.x : mousePos().x;
+        const dir = targetX - catcher.pos.x;
+
+        if (Math.abs(dir) > 5) {
+            const speed = Math.min(Math.abs(dir) * 5, 500);
+            catcher.pos.x += Math.sign(dir) * speed * dt();
+        }
+
+        // Keep catcher in bounds
+        catcher.pos.x = clamp(catcher.pos.x, catcherWidth/2 + 10, GAME_WIDTH - catcherWidth/2 - 10);
+    });
+
+    // Create a falling monster for catch mode
+    function createFallingMonster(number, xPos) {
+        const designIndex = getAvailableDesign();
+        usedDesigns.push(designIndex);
+        const design = MONSTER_DESIGNS[designIndex];
+
+        const bodySize = 22;
+        let bodyComponent;
+        if (design.bodyShape === "circle") {
+            bodyComponent = circle(bodySize);
+        } else {
+            bodyComponent = rect(bodySize * 2, bodySize * 2, { radius: 8 });
+        }
+
+        const monster = add([
+            bodyComponent,
+            pos(xPos, -50),
+            color(...design.bodyColor),
+            area({ width: 45, height: 45, offset: vec2(-22, -22) }),
+            anchor("center"),
+            "fallingMonster",
+            {
+                number: number,
+                designIndex: designIndex,
+                fallSpeed: rand(120, 180),
+                swaySpeed: rand(2, 4),
+                swayAmount: rand(20, 40),
+                startX: xPos,
+                fallTime: 0,
+                isCaught: false,
+                attachments: [],
+                antennae: [],
+                pupils: [],
+                eyeLids: [],
+                mouth: null,
+                animTime: rand(0, 10),
+                blinkTimer: rand(2, 4),
+                isBlinking: false,
+                blinkDuration: 0,
+            }
+        ]);
+
+        // Add features
+        addMonsterFeatures(monster, design);
+        addMonsterEyes(monster, design);
+        addMonsterExpression(monster, design);
+
+        // Add the number display
+        const numBubble = add([
+            circle(16),
+            pos(0, 0),
+            color(255, 255, 255),
+            opacity(0.9),
+            z(3),
+            anchor("center"),
+            follow(monster, vec2(0, 35)),
+            "monsterPart",
+            { parentMonster: monster }
+        ]);
+        monster.attachments.push(numBubble);
+
+        const numText = add([
+            text(String(number), { size: 22 }),
+            pos(0, 0),
+            color(50, 50, 50),
+            anchor("center"),
+            z(4),
+            follow(monster, vec2(0, 35)),
+            "monsterNumber",
+            { parentMonster: monster }
+        ]);
+        monster.attachments.push(numText);
+
+        return monster;
+    }
+
+    // Monster falling behavior
+    onUpdate("fallingMonster", (monster) => {
+        if (monster.isCaught) return;
+
+        monster.fallTime += dt();
+        monster.animTime += dt();
+
+        // Fall with gentle swaying
+        monster.pos.y += monster.fallSpeed * dt();
+        monster.pos.x = monster.startX + Math.sin(monster.fallTime * monster.swaySpeed) * monster.swayAmount;
+
+        // Keep in bounds horizontally
+        monster.pos.x = clamp(monster.pos.x, 40, GAME_WIDTH - 40);
+
+        // Animate antennae
+        if (monster.antennae.length > 0) {
+            const wiggle = Math.sin(monster.animTime * 5) * 4;
+            monster.antennae.forEach((ant, i) => {
+                const dir = i === 0 ? -1 : 1;
+                ant.pos = monster.pos.add(vec2(dir * 12 + wiggle * dir, -28 + Math.abs(wiggle) * 0.5));
+            });
+        }
+
+        // Blink animation
+        monster.blinkTimer -= dt();
+        if (monster.blinkTimer <= 0 && !monster.isBlinking) {
+            monster.isBlinking = true;
+            monster.blinkDuration = 0.15;
+            monster.eyeLids.forEach(lid => lid.opacity = 1);
+        }
+        if (monster.isBlinking) {
+            monster.blinkDuration -= dt();
+            if (monster.blinkDuration <= 0) {
+                monster.isBlinking = false;
+                monster.blinkTimer = rand(2, 5);
+                monster.eyeLids.forEach(lid => lid.opacity = 0);
+            }
+        }
+
+        // Mouth animation
+        if (monster.mouth && monster.mouth.exists()) {
+            const mouthScale = 1 + Math.sin(monster.animTime * 2) * 0.1;
+            monster.mouth.scale = vec2(1, mouthScale);
+        }
+
+        // Check if monster hit the ground (missed)
+        if (monster.pos.y > groundY - 10) {
+            cleanupMonster(monster);
+            destroy(monster);
+        }
+    });
+
+    // Collision detection: catcher catches monster
+    catcher.onCollide("fallingMonster", (monster) => {
+        if (monster.isCaught || !gameActive) return;
+
+        monster.isCaught = true;
+
+        // Add to caught monsters
+        caughtMonsters.push(monster);
+        currentSum += monster.number;
+        sumText.text = `Sum: ${currentSum}`;
+
+        // Visual feedback - monster jumps into basket
+        const targetY = catcher.pos.y - 5;
+        const startY = monster.pos.y;
+        let jumpTime = 0;
+
+        const jumpUpdate = monster.onUpdate(() => {
+            jumpTime += dt() * 4;
+            if (jumpTime < 1) {
+                monster.pos.y = startY + (targetY - startY) * jumpTime - Math.sin(jumpTime * Math.PI) * 30;
+                monster.pos.x = catcher.pos.x + (caughtMonsters.length - 1) * 15 - 15;
+            } else {
+                jumpUpdate.cancel();
+                // Hide monster in basket (shrink and fade)
+                let shrinkTime = 0;
+                const shrinkUpdate = monster.onUpdate(() => {
+                    shrinkTime += dt() * 3;
+                    monster.scale = vec2(1 - shrinkTime * 0.8, 1 - shrinkTime * 0.8);
+                    monster.opacity = 1 - shrinkTime;
+                    monster.attachments.forEach(a => {
+                        if (a.exists()) {
+                            a.scale = monster.scale;
+                            a.opacity = monster.opacity;
+                        }
+                    });
+                    if (shrinkTime >= 1) {
+                        shrinkUpdate.cancel();
+                    }
+                });
+
+                // Check sum after catching
+                checkSum();
+            }
+        });
+    });
+
+    // Check if current sum matches target
+    function checkSum() {
+        if (currentSum === targetSum) {
+            // Success!
+            gameActive = false;
+            score += 10 + comboCount * 5;
+            comboCount++;
+
+            flashTarget(true);
+
+            // Celebration!
+            doCatchCelebration(() => {
+                // Clean up caught monsters
+                caughtMonsters.forEach(m => {
+                    if (m.exists()) {
+                        cleanupMonster(m);
+                        destroy(m);
+                    }
+                });
+                caughtMonsters = [];
+                currentSum = 0;
+                sumText.text = "Sum: 0";
+
+                // New target
+                targetSum = randi(5, 11);
+                targetText.text = String(targetSum);
+
+                gameActive = true;
+            });
+        } else if (currentSum > targetSum) {
+            // Over the target - failure!
+            gameActive = false;
+            comboCount = 0;
+
+            flashTarget(false);
+
+            // Monsters run away
+            doFailureAnimation(() => {
+                caughtMonsters = [];
+                currentSum = 0;
+                sumText.text = "Sum: 0";
+                gameActive = true;
+            });
+        }
+        // If currentSum < targetSum, keep catching
+    }
+
+    // Celebration animation
+    function doCatchCelebration(onComplete) {
+        // Confetti burst
+        spawnConfetti(vec2(GAME_WIDTH / 2, GAME_HEIGHT / 2), 40);
+        spawnSparkles(catcher.pos);
+
+        // Make caught monsters dance up from basket
+        let celebTime = 0;
+        const celebDuration = 1.5;
+
+        caughtMonsters.forEach((monster, index) => {
+            if (!monster.exists()) return;
+
+            monster.scale = vec2(1, 1);
+            monster.opacity = 1;
+            monster.attachments.forEach(a => {
+                if (a.exists()) {
+                    a.scale = vec2(1, 1);
+                    a.opacity = 1;
+                }
+            });
+
+            const startPos = monster.pos.clone();
+            const danceUpdate = monster.onUpdate(() => {
+                celebTime += dt();
+                const t = celebTime / celebDuration;
+
+                // Jump and spin dance
+                monster.pos.x = startPos.x + Math.sin(t * Math.PI * 6 + index) * 30;
+                monster.pos.y = startPos.y - 50 - Math.abs(Math.sin(t * Math.PI * 8)) * 40;
+
+                if (celebTime >= celebDuration) {
+                    danceUpdate.cancel();
+                }
+            });
+        });
+
+        // Spawn balloons
+        for (let i = 0; i < 5; i++) {
+            wait(i * 0.2, () => {
+                spawnBalloon(vec2(rand(100, GAME_WIDTH - 100), GAME_HEIGHT - 50));
+            });
+        }
+
+        wait(celebDuration + 0.3, onComplete);
+    }
+
+    // Failure animation - monsters scatter
+    function doFailureAnimation(onComplete) {
+        caughtMonsters.forEach((monster, index) => {
+            if (!monster.exists()) return;
+
+            monster.scale = vec2(1, 1);
+            monster.opacity = 1;
+            monster.attachments.forEach(a => {
+                if (a.exists()) {
+                    a.scale = vec2(1, 1);
+                    a.opacity = 1;
+                }
+            });
+
+            // Scatter in different directions
+            const angle = (index / caughtMonsters.length) * Math.PI * 2 + rand(-0.3, 0.3);
+            const speed = rand(200, 300);
+            const vel = vec2(Math.cos(angle) * speed, -Math.abs(Math.sin(angle)) * speed - 100);
+
+            let runTime = 0;
+            const runUpdate = monster.onUpdate(() => {
+                runTime += dt();
+                vel.y += 400 * dt(); // Gravity
+                monster.pos = monster.pos.add(vel.scale(dt()));
+
+                // Spin
+                if (monster.angle !== undefined) {
+                    monster.angle += 360 * dt();
+                }
+
+                if (monster.pos.y > GAME_HEIGHT + 100 || monster.pos.x < -100 || monster.pos.x > GAME_WIDTH + 100) {
+                    runUpdate.cancel();
+                    cleanupMonster(monster);
+                    destroy(monster);
+                }
+            });
+        });
+
+        wait(1.5, onComplete);
+    }
+
+    // Spawn monsters periodically
+    let spawnTimer = 0;
+    const baseSpawnRate = isMobile ? 1.8 : 1.5; // Seconds between spawns
+
+    onUpdate(() => {
+        if (!gameActive) return;
+
+        spawnTimer += dt();
+
+        // Adjust spawn rate based on score (gets faster)
+        const spawnRate = Math.max(0.8, baseSpawnRate - score * 0.01);
+
+        if (spawnTimer >= spawnRate) {
+            spawnTimer = 0;
+
+            // Generate number that could be useful
+            const remaining = targetSum - currentSum;
+            let newNumber;
+
+            if (remaining > 0 && remaining <= 5 && rand() < 0.5) {
+                // 50% chance to spawn a number that completes the target
+                newNumber = remaining;
+            } else if (rand() < 0.3 && remaining > 1) {
+                // 30% chance to spawn part of what's needed
+                newNumber = randi(1, Math.min(5, remaining));
+            } else {
+                // Random number 1-5
+                newNumber = randi(1, 6);
+            }
+
+            // Spawn at random x position, avoiding edges
+            const xPos = rand(80, GAME_WIDTH - 80);
+            createFallingMonster(newNumber, xPos);
+        }
+    });
+
+    // Spawn initial monster
+    wait(0.5, () => {
+        const startNum = randi(1, Math.min(4, targetSum));
+        createFallingMonster(startNum, GAME_WIDTH / 2);
+    });
+
+    // Instructions
+    const instructionText = isTouchDevice
+        ? "Touch to move basket. Catch monsters to reach the target sum!"
+        : "Move mouse to catch. Reach the target sum!";
+
+    add([
+        text(instructionText, { size: isMobile ? 10 : 12 }),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT - 20),
+        anchor("center"),
+        color(50, 50, 50),
+        z(100),
+    ]);
+
+    // Back button
+    const backBtn = add([
+        rect(60, 25, { radius: 5 }),
+        pos(GAME_WIDTH - 40, 20),
+        color(100, 100, 100),
+        anchor("center"),
+        area(),
+        z(100),
+    ]);
+
+    add([
+        text("Menu", { size: 12 }),
+        pos(GAME_WIDTH - 40, 20),
+        color(255, 255, 255),
+        anchor("center"),
+        z(101),
+    ]);
+
+    backBtn.onClick(() => go("title"));
+    onKeyPress("escape", () => go("title"));
+});
+
+// Title screen with mode selection
 scene("title", () => {
     add([
         rect(GAME_WIDTH, GAME_HEIGHT),
@@ -2177,92 +2783,193 @@ scene("title", () => {
     ]);
 
     // Title text - adjust size for mobile
-    const titleSize = isMobile ? 48 : 64;
-    const subtitleSize = isMobile ? 18 : 24;
+    const titleSize = isMobile ? 42 : 64;
+    const subtitleSize = isMobile ? 14 : 20;
+    const buttonSize = isMobile ? 18 : 24;
 
     add([
         text("MONSTER MATH", { size: titleSize }),
-        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.25),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.12),
         anchor("center"),
         color(255, 100, 100),
     ]);
 
     add([
         text("Help friendly monsters learn addition!", { size: subtitleSize }),
-        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.35),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.20),
         anchor("center"),
         color(80, 80, 80),
     ]);
 
     // Animated monster on title screen
-    const monsterY = GAME_HEIGHT * 0.55;
+    const monsterY = GAME_HEIGHT * 0.38;
     const titleMonster = add([
-        circle(40),
+        circle(35),
         pos(GAME_WIDTH / 2, monsterY),
         color(150, 255, 150),
     ]);
 
     add([
-        circle(12),
+        circle(10),
         pos(0, 0),
         color(255, 255, 255),
-        follow(titleMonster, vec2(-12, -8)),
+        follow(titleMonster, vec2(-10, -6)),
     ]);
     add([
-        circle(12),
+        circle(10),
         pos(0, 0),
         color(255, 255, 255),
-        follow(titleMonster, vec2(12, -8)),
+        follow(titleMonster, vec2(10, -6)),
     ]);
     add([
-        circle(6),
+        circle(5),
         pos(0, 0),
         color(0, 0, 0),
-        follow(titleMonster, vec2(-10, -8)),
+        follow(titleMonster, vec2(-8, -6)),
     ]);
     add([
-        circle(6),
+        circle(5),
         pos(0, 0),
         color(0, 0, 0),
-        follow(titleMonster, vec2(14, -8)),
+        follow(titleMonster, vec2(12, -6)),
     ]);
     add([
-        text("3", { size: 32 }),
+        text("3", { size: 28 }),
         pos(0, 0),
         anchor("center"),
         color(50, 50, 50),
-        follow(titleMonster, vec2(0, 45)),
+        follow(titleMonster, vec2(0, 40)),
     ]);
 
     // Bounce animation
     let t = 0;
     titleMonster.onUpdate(() => {
         t += dt() * 3;
-        titleMonster.pos.y = monsterY + Math.sin(t) * 15;
+        titleMonster.pos.y = monsterY + Math.sin(t) * 12;
     });
 
-    const startText = isTouchDevice
-        ? "Tap to Start"
-        : "Press SPACE or Click to Start";
+    // Mode selection buttons
+    const buttonWidth = isMobile ? 160 : 200;
+    const buttonHeight = isMobile ? 50 : 60;
+    const buttonY1 = GAME_HEIGHT * 0.58;
+    const buttonY2 = GAME_HEIGHT * 0.72;
 
-    add([
-        text(startText, { size: 28 }),
-        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.8),
+    // Classic Mode button
+    const classicBtn = add([
+        rect(buttonWidth, buttonHeight, { radius: 10 }),
+        pos(GAME_WIDTH / 2, buttonY1),
         anchor("center"),
-        color(100, 100, 100),
+        color(100, 200, 100),
+        area(),
+        "classicBtn",
     ]);
 
+    add([
+        text("Classic Mode", { size: buttonSize }),
+        pos(GAME_WIDTH / 2, buttonY1 - 8),
+        anchor("center"),
+        color(255, 255, 255),
+        z(1),
+    ]);
+
+    const classicDesc = isMobile ? "Guide & match" : "Guide monsters to zones";
+    add([
+        text(classicDesc, { size: isMobile ? 10 : 12 }),
+        pos(GAME_WIDTH / 2, buttonY1 + 12),
+        anchor("center"),
+        color(220, 255, 220),
+        z(1),
+    ]);
+
+    // Catch Mode button
+    const catchBtn = add([
+        rect(buttonWidth, buttonHeight, { radius: 10 }),
+        pos(GAME_WIDTH / 2, buttonY2),
+        anchor("center"),
+        color(200, 100, 200),
+        area(),
+        "catchBtn",
+    ]);
+
+    add([
+        text("Catch Mode", { size: buttonSize }),
+        pos(GAME_WIDTH / 2, buttonY2 - 8),
+        anchor("center"),
+        color(255, 255, 255),
+        z(1),
+    ]);
+
+    const catchDesc = isMobile ? "Catch falling!" : "Catch falling monsters";
+    add([
+        text(catchDesc, { size: isMobile ? 10 : 12 }),
+        pos(GAME_WIDTH / 2, buttonY2 + 12),
+        anchor("center"),
+        color(255, 220, 255),
+        z(1),
+    ]);
+
+    // Button hover effects (desktop)
+    classicBtn.onUpdate(() => {
+        const mpos = mousePos();
+        const hovered = mpos.x > classicBtn.pos.x - buttonWidth/2 &&
+                       mpos.x < classicBtn.pos.x + buttonWidth/2 &&
+                       mpos.y > classicBtn.pos.y - buttonHeight/2 &&
+                       mpos.y < classicBtn.pos.y + buttonHeight/2;
+        classicBtn.color = hovered ? rgb(120, 220, 120) : rgb(100, 200, 100);
+    });
+
+    catchBtn.onUpdate(() => {
+        const mpos = mousePos();
+        const hovered = mpos.x > catchBtn.pos.x - buttonWidth/2 &&
+                       mpos.x < catchBtn.pos.x + buttonWidth/2 &&
+                       mpos.y > catchBtn.pos.y - buttonHeight/2 &&
+                       mpos.y < catchBtn.pos.y + buttonHeight/2;
+        catchBtn.color = hovered ? rgb(220, 120, 220) : rgb(200, 100, 200);
+    });
+
+    // Button clicks
+    classicBtn.onClick(() => go("game"));
+    catchBtn.onClick(() => go("catchGame"));
+
+    // Keyboard shortcuts
+    onKeyPress("1", () => go("game"));
+    onKeyPress("2", () => go("catchGame"));
     onKeyPress("space", () => go("game"));
-    onClick(() => go("game"));
 
     // Touch support for title screen
     if (isTouchDevice) {
         const canvas = k.canvas;
-        canvas.addEventListener('touchstart', (e) => {
+        const handleTouch = (e) => {
             e.preventDefault();
-            go("game");
-        }, { once: true, passive: false });
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = GAME_WIDTH / rect.width;
+            const scaleY = GAME_HEIGHT / rect.height;
+            const touchX = (touch.clientX - rect.left) * scaleX;
+            const touchY = (touch.clientY - rect.top) * scaleY;
+
+            // Check if touch is on classic button
+            if (touchX > GAME_WIDTH/2 - buttonWidth/2 && touchX < GAME_WIDTH/2 + buttonWidth/2 &&
+                touchY > buttonY1 - buttonHeight/2 && touchY < buttonY1 + buttonHeight/2) {
+                go("game");
+            }
+            // Check if touch is on catch button
+            else if (touchX > GAME_WIDTH/2 - buttonWidth/2 && touchX < GAME_WIDTH/2 + buttonWidth/2 &&
+                     touchY > buttonY2 - buttonHeight/2 && touchY < buttonY2 + buttonHeight/2) {
+                go("catchGame");
+            }
+        };
+        canvas.addEventListener('touchstart', handleTouch, { passive: false });
     }
+
+    // Instructions
+    const instrText = isTouchDevice ? "Tap a mode to play!" : "Click or press 1/2 to select";
+    add([
+        text(instrText, { size: isMobile ? 12 : 14 }),
+        pos(GAME_WIDTH / 2, GAME_HEIGHT * 0.90),
+        anchor("center"),
+        color(100, 100, 100),
+    ]);
 });
 
 // Start with title screen
