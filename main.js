@@ -2217,7 +2217,7 @@ scene("catchGame", () => {
         pos(GAME_WIDTH / 2, groundY - 20),
         color(139, 90, 43), // Brown basket
         anchor("center"),
-        area({ width: catcherWidth + 20, height: catcherHeight + 30, offset: vec2(-(catcherWidth + 20)/2, -(catcherHeight + 30)/2 - 15) }),
+        area({ width: catcherWidth + 10, height: catcherHeight + 20, offset: vec2(-(catcherWidth + 10)/2, -(catcherHeight + 20)/2 - 15) }),
         "catcher",
     ]);
 
@@ -2405,9 +2405,9 @@ scene("catchGame", () => {
         }
 
         // Fall speed starts very slow and gently increases
-        // Initial: 60-80, Max: 100-130 (still gentle for kids)
-        const minFallSpeed = 60 + difficultyProgress * 40;
-        const maxFallSpeed = 80 + difficultyProgress * 50;
+        // Initial: 45-65, Max: 85-115 (still gentle for kids)
+        const minFallSpeed = 45 + difficultyProgress * 40;
+        const maxFallSpeed = 65 + difficultyProgress * 50;
         const fallSpeed = rand(minFallSpeed, maxFallSpeed);
 
         const monster = add([
@@ -2623,11 +2623,8 @@ scene("catchGame", () => {
         spawnConfetti(vec2(GAME_WIDTH / 2, GAME_HEIGHT / 2), 40);
         spawnSparkles(catcher.pos);
 
-        // Make caught monsters dance up from basket
-        let celebTime = 0;
-        const celebDuration = 1.5;
-
-        caughtMonsters.forEach((monster, index) => {
+        // Prepare monsters for celebration - restore visibility
+        caughtMonsters.forEach((monster) => {
             if (!monster.exists()) return;
 
             monster.scale = vec2(1, 1);
@@ -2638,20 +2635,28 @@ scene("catchGame", () => {
                     a.opacity = 1;
                 }
             });
+        });
 
-            const startPos = monster.pos.clone();
-            const danceUpdate = monster.onUpdate(() => {
-                celebTime += dt();
-                const t = celebTime / celebDuration;
+        // Each monster does its own varied celebration (like classic mode)
+        let celebsComplete = 0;
+        const totalCelebs = caughtMonsters.filter(m => m.exists()).length;
 
-                // Jump and spin dance
-                monster.pos.x = startPos.x + Math.sin(t * Math.PI * 6 + index) * 30;
-                monster.pos.y = startPos.y - 50 - Math.abs(Math.sin(t * Math.PI * 8)) * 40;
+        function checkCelebsDone() {
+            celebsComplete++;
+            if (celebsComplete >= totalCelebs) {
+                // All celebrations done, clean up after a brief pause
+                wait(0.3, onComplete);
+            }
+        }
 
-                if (celebTime >= celebDuration) {
-                    danceUpdate.cancel();
-                }
-            });
+        caughtMonsters.forEach((monster) => {
+            if (!monster.exists()) {
+                celebsComplete++;
+                return;
+            }
+
+            // Use the classic celebration function for varied animations
+            doCelebration(monster, catcher, checkCelebsDone);
         });
 
         // Spawn balloons
@@ -2660,8 +2665,6 @@ scene("catchGame", () => {
                 spawnBalloon(vec2(rand(100, GAME_WIDTH - 100), GAME_HEIGHT - 50));
             });
         }
-
-        wait(celebDuration + 0.3, onComplete);
     }
 
     // Failure animation - monsters scatter
