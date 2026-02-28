@@ -215,9 +215,11 @@ function drawBackground() {
 
 // Create the player (kid character)
 function createPlayer() {
+    // Start player in upper-center on portrait mobile, center on desktop
+    const playerStartY = (isMobile && isPortrait) ? GAME_HEIGHT * 0.35 : GAME_HEIGHT / 2;
     const player = add([
         circle(20),
-        pos(GAME_WIDTH / 2, GAME_HEIGHT / 2),
+        pos(GAME_WIDTH / 2, playerStartY),
         color(255, 220, 180), // Skin tone
         area({ width: 40, height: 40, offset: vec2(-20, -20) }),
         "player",
@@ -1709,11 +1711,11 @@ scene("game", () => {
     // Layout differs for portrait vs landscape to use space better
     // Phones (portrait mobile) get only 2 zones to reduce crowding
     if (isMobile && isPortrait) {
-        // Portrait phone: 2 zones, spread left/right in the middle third of the screen
-        // Avoids the top (sky/score) and bottom (instruction text) strips
+        // Portrait phone: 2 zones in lower portion, spread left/right
+        // Player starts in middle, monsters wander upper half — clear separation
         targetSums = [5, 7];
-        createTargetZone(5, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.55));
-        createTargetZone(7, vec2(GAME_WIDTH * 0.75, GAME_HEIGHT * 0.55));
+        createTargetZone(5, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.72));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.75, GAME_HEIGHT * 0.72));
     } else {
         // Tablet/Desktop: 3 zones for more variety
         targetSums = [4, 5, 7];
