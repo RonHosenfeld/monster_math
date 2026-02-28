@@ -1,10 +1,10 @@
 import kaboom from "https://unpkg.com/kaboom@3000.1.17/dist/kaboom.mjs";
 
-// Device detection - more robust detection
-const userAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+// Device detection - prioritize screen size over user agent for browser testing
 const touchCapable = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 const smallScreen = window.innerWidth <= 768 || window.innerHeight <= 768;
-const isMobile = userAgentMobile || (touchCapable && smallScreen);
+const userAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isMobile = smallScreen || userAgentMobile || touchCapable;
 const isPortrait = window.innerHeight > window.innerWidth;
 
 // Game dimensions based on device and orientation
@@ -13,17 +13,20 @@ const isPortrait = window.innerHeight > window.innerWidth;
 let GAME_WIDTH, GAME_HEIGHT;
 
 if (isMobile && isPortrait) {
-    // Portrait phone - use dimensions that fill the screen better
-    // Match typical phone aspect ratio (roughly 9:19 or similar)
+    // Portrait phone - match the actual screen aspect ratio exactly
     GAME_WIDTH = 400;
-    GAME_HEIGHT = 700;
+    GAME_HEIGHT = Math.round(400 * (window.innerHeight / window.innerWidth));
+} else if (isMobile) {
+    // Landscape mobile
+    GAME_WIDTH = 800;
+    GAME_HEIGHT = Math.round(800 * (window.innerHeight / window.innerWidth));
 } else {
-    // Desktop or landscape mobile
+    // Desktop
     GAME_WIDTH = 800;
     GAME_HEIGHT = 600;
 }
 
-// Calculate responsive canvas size
+// Calculate responsive canvas size — fill the screen on mobile
 function getGameDimensions() {
     const baseWidth = GAME_WIDTH;
     const baseHeight = GAME_HEIGHT;
@@ -35,28 +38,22 @@ function getGameDimensions() {
 
     let scale;
 
-    // Calculate scale to fit screen
-    if (windowAspect > aspectRatio) {
-        // Window is wider - fit to height
-        scale = windowHeight / baseHeight;
-    } else {
-        // Window is taller - fit to width
-        scale = windowWidth / baseWidth;
-    }
-
-    // Device-specific scale adjustments
     if (isMobile) {
-        // Mobile: fill almost all of the screen (98%)
-        scale = scale * 0.98;
+        // Fill the screen completely on mobile — no borders or letterboxing
+        scale = windowAspect > aspectRatio
+            ? windowHeight / baseHeight
+            : windowWidth / baseWidth;
     } else {
-        // Desktop: small border (90% of available space)
-        scale = scale * 0.90;
+        // Desktop: small comfortable border
+        scale = windowAspect > aspectRatio
+            ? (windowHeight / baseHeight) * 0.90
+            : (windowWidth / baseWidth) * 0.90;
     }
 
     return {
         width: baseWidth,
         height: baseHeight,
-        scale: Math.max(0.5, Math.min(scale, 2.5))
+        scale: Math.max(0.5, Math.min(scale, 3.0))
     };
 }
 
@@ -71,17 +68,13 @@ const k = kaboom({
     crisp: true,
     canvas: document.getElementById("game-container")?.querySelector("canvas") || undefined,
     stretch: true,
-    letterbox: true,
+    letterbox: false, // Disable letterboxing — fill the screen on mobile
 });
 
 // Touch/Mouse position tracker for mobile
 let currentPointerPos = vec2(GAME_WIDTH / 2, GAME_HEIGHT / 2);
-let isTouchDevice = false;
-
-// Detect touch device
-if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-    isTouchDevice = true;
-}
+// isTouchDevice mirrors isMobile — consistent detection everywhere
+const isTouchDevice = isMobile;
 
 // Shake detection for releasing monsters
 let lastShakeTime = 0;
@@ -108,12 +101,18 @@ if (isTouchDevice && window.DeviceMotionEvent) {
     });
 }
 
-// Game constants
+// Game constants — tuned for mobile vs desktop
 const PLAYER_SPEED = 300;
 const MONSTER_SPEED = 60;
 const MONSTER_CHASE_SPEED = 280;
 const ZONE_CHECK_DELAY = 1.0; // seconds to wait before checking sum
 const MAX_FOLLOWING = 2; // Maximum monsters that can follow at once
+
+// Mobile sizing — bigger targets for small fingers
+const ZONE_RADIUS = (isMobile && isPortrait) ? 75 : 60;
+const MONSTER_BODY_SIZE = (isMobile && isPortrait) ? 32 : 25;
+const MONSTER_NUMBER_BUBBLE = (isMobile && isPortrait) ? 22 : 18;
+const MONSTER_NUMBER_SIZE = (isMobile && isPortrait) ? 28 : 24;
 
 // Monster design configurations
 const MONSTER_DESIGNS = [
@@ -202,11 +201,12 @@ function drawBackground() {
         z(-10),
     ]);
 
-    // Some decorative elements (darker grass patches)
-    for (let i = 0; i < 12; i++) {
+    // Decorative grass patches — fewer on mobile to reduce visual clutter
+    const dotCount = (isMobile && isPortrait) ? 5 : 12;
+    for (let i = 0; i < dotCount; i++) {
         add([
-            circle(rand(5, 15)),
-            pos(rand(50, GAME_WIDTH - 50), rand(GAME_HEIGHT * 0.15, GAME_HEIGHT - 50)),
+            circle(rand(5, 12)),
+            pos(rand(50, GAME_WIDTH - 50), rand(GAME_HEIGHT * 0.20, GAME_HEIGHT - 50)),
             color(100, 180, 60),
             z(-5),
         ]);
@@ -215,9 +215,11 @@ function drawBackground() {
 
 // Create the player (kid character)
 function createPlayer() {
+    // Start player in upper-center on portrait mobile, center on desktop
+    const playerStartY = (isMobile && isPortrait) ? GAME_HEIGHT * 0.35 : GAME_HEIGHT / 2;
     const player = add([
         circle(20),
-        pos(GAME_WIDTH / 2, GAME_HEIGHT / 2),
+        pos(GAME_WIDTH / 2, playerStartY),
         color(255, 220, 180), // Skin tone
         area({ width: 40, height: 40, offset: vec2(-20, -20) }),
         "player",
@@ -319,8 +321,8 @@ function createMonster(number, startPos, designIndex = null) {
     usedDesigns.push(designIndex);
     const design = MONSTER_DESIGNS[designIndex];
 
-    // Create body based on shape
-    const bodySize = 25;
+    // Create body based on shape — larger on mobile for fat fingers
+    const bodySize = MONSTER_BODY_SIZE;
     let bodyComponent;
     if (design.bodyShape === "circle") {
         bodyComponent = circle(bodySize);
@@ -365,27 +367,28 @@ function createMonster(number, startPos, designIndex = null) {
     addMonsterEyes(monster, design);
     addMonsterExpression(monster, design);
 
-    // Add the number display (in a bubble)
+    // Add the number display (in a bubble) — larger on mobile
+    const bubbleOffset = bodySize + MONSTER_NUMBER_BUBBLE - 4;
     const numBubble = add([
-        circle(18),
+        circle(MONSTER_NUMBER_BUBBLE),
         pos(0, 0),
         color(255, 255, 255),
         opacity(0.9),
         z(3),
         anchor("center"),
-        follow(monster, vec2(0, 40)),
+        follow(monster, vec2(0, bubbleOffset)),
         "monsterPart",
         { parentMonster: monster }
     ]);
     monster.attachments.push(numBubble);
 
     const numText = add([
-        text(String(number), { size: 24 }),
+        text(String(number), { size: MONSTER_NUMBER_SIZE }),
         pos(0, 0),
         color(50, 50, 50),
         anchor("center"),
         z(4),
-        follow(monster, vec2(0, 40)),
+        follow(monster, vec2(0, bubbleOffset)),
         "monsterNumber",
         { parentMonster: monster }
     ]);
@@ -916,7 +919,7 @@ function spawnMonsterSmart() {
 function createTargetZone(targetSum, position) {
     // Glow ring (shows when monsters are inside)
     const glowRing = add([
-        circle(70),
+        circle(ZONE_RADIUS + 15),
         pos(position),
         color(255, 255, 255),
         opacity(0),
@@ -925,13 +928,13 @@ function createTargetZone(targetSum, position) {
         "zoneGlow",
     ]);
 
-    // Main zone background
+    // Main zone background — larger radius for easier finger targeting on mobile
     const zone = add([
-        circle(60),
+        circle(ZONE_RADIUS),
         pos(position),
         color(255, 255, 100),
         opacity(0.6),
-        area({ width: 120, height: 120, offset: vec2(-60, -60) }),
+        area({ width: ZONE_RADIUS * 2, height: ZONE_RADIUS * 2, offset: vec2(-ZONE_RADIUS, -ZONE_RADIUS) }),
         "targetZone",
         {
             targetSum: targetSum,
@@ -944,11 +947,12 @@ function createTargetZone(targetSum, position) {
         }
     ]);
 
-    // Star decoration points
+    // Star decoration points — scaled to zone radius
+    const starDist = ZONE_RADIUS * 0.83;
     for (let i = 0; i < 5; i++) {
         const angle = (i * 72 - 90) * Math.PI / 180;
-        const pointX = Math.cos(angle) * 50;
-        const pointY = Math.sin(angle) * 50;
+        const pointX = Math.cos(angle) * starDist;
+        const pointY = Math.sin(angle) * starDist;
         add([
             polygon([vec2(0, 0), vec2(-10, 25), vec2(10, 25)]),
             pos(position.x + pointX, position.y + pointY),
@@ -958,9 +962,10 @@ function createTargetZone(targetSum, position) {
         ]);
     }
 
-    // Target number display
+    // Target number display — bigger on mobile for readability
+    const zoneNumSize = (isMobile && isPortrait) ? 44 : 36;
     const numberText = add([
-        text(String(targetSum), { size: 36 }),
+        text(String(targetSum), { size: zoneNumSize }),
         pos(position),
         color(100, 50, 0),
         anchor("center"),
@@ -1706,14 +1711,14 @@ scene("game", () => {
     // Layout differs for portrait vs landscape to use space better
     // Phones (portrait mobile) get only 2 zones to reduce crowding
     if (isMobile && isPortrait) {
-        // Portrait phone mode: 2 zones far apart like soccer goals for easier navigation
+        // Portrait phone: 2 zones in lower portion, spread left/right
+        // Player starts in middle, monsters wander upper half — clear separation
         targetSums = [5, 7];
-        createTargetZone(5, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.20));
-        createTargetZone(7, vec2(GAME_WIDTH * 0.50, GAME_HEIGHT * 0.85));
+        createTargetZone(5, vec2(GAME_WIDTH * 0.25, GAME_HEIGHT * 0.72));
+        createTargetZone(7, vec2(GAME_WIDTH * 0.75, GAME_HEIGHT * 0.72));
     } else {
         // Tablet/Desktop: 3 zones for more variety
         targetSums = [4, 5, 7];
-        // Landscape mode: zones spread horizontally
         createTargetZone(5, vec2(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.50));
         createTargetZone(7, vec2(GAME_WIDTH * 0.85, GAME_HEIGHT * 0.50));
         createTargetZone(4, vec2(GAME_WIDTH / 2, GAME_HEIGHT * 0.80));
@@ -1728,8 +1733,8 @@ scene("game", () => {
     createMonster(secondNum);
 
     // Then add more monsters using smart spawning
-    // Fewer monsters on phones to avoid crowding
-    const additionalMonsters = (isMobile && isPortrait) ? 2 : 3;
+    // Fewer monsters on phones — less clutter, bigger targets for small fingers
+    const additionalMonsters = (isMobile && isPortrait) ? 1 : 3;
     for (let i = 0; i < additionalMonsters; i++) {
         spawnMonsterSmart();
     }
@@ -2033,7 +2038,7 @@ scene("game", () => {
             if (monster.isDancing || monster.isBumping || monster.isParading) return;
 
             const dist = monster.pos.dist(zone.pos);
-            if (dist < 70) {
+            if (dist < ZONE_RADIUS + 10) {
                 monstersNearby.push(monster);
                 monster.inZone = zone;
             } else if (monster.inZone === zone) {
@@ -2145,11 +2150,15 @@ scene("game", () => {
         }
     });
 
-    // Score display
+    // Score display — right-aligned on mobile to avoid overlapping player in corner
+    const scoreX = (isMobile && isPortrait) ? GAME_WIDTH - 20 : 20;
+    const scoreAnchor = (isMobile && isPortrait) ? "topright" : "topleft";
+    const scoreSize = (isMobile && isPortrait) ? 28 : 24;
     add([
-        text("Score: 0", { size: 24 }),
-        pos(20, 20),
+        text("Score: 0", { size: scoreSize }),
+        pos(scoreX, 20),
         color(255, 255, 255),
+        anchor(scoreAnchor),
         z(100),
         { update() { this.text = `Score: ${score}`; } }
     ]);
@@ -2209,8 +2218,8 @@ scene("catchGame", () => {
         ]);
     }
 
-    // Create the catcher (basket/platform at bottom)
-    const catcherWidth = isMobile ? 100 : 120;
+    // Create the catcher (basket/platform at bottom) — wider on mobile for easier catching
+    const catcherWidth = (isMobile && isPortrait) ? 130 : (isMobile ? 110 : 120);
     const catcherHeight = 25;
     const catcher = add([
         rect(catcherWidth, catcherHeight, { radius: 8 }),
@@ -2319,10 +2328,13 @@ scene("catchGame", () => {
         z(100),
     ]);
 
-    // Score display
+    // Score display — bottom-left on mobile to stay clear of target UI at top
+    const catchScoreX = 20;
+    const catchScoreY = (isMobile && isPortrait) ? GAME_HEIGHT - 80 : 20;
+    const catchScoreSize = (isMobile && isPortrait) ? 22 : (isMobile ? 18 : 24);
     add([
-        text("Score: 0", { size: isMobile ? 18 : 24 }),
-        pos(20, 20),
+        text("Score: 0", { size: catchScoreSize }),
+        pos(catchScoreX, catchScoreY),
         color(255, 255, 255),
         z(100),
         { update() { this.text = `Score: ${score}`; } }
